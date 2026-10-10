@@ -28,29 +28,50 @@ This makes kids **experience** engineering in their guts, not just understand it
 
 ---
 
+## 🎮 Two Parts: Learn and Simulate
+
+The first screen offers two paths. **Education** starts a simplified 10-cycle Moon mission with a small crew and low difficulty, using the same outbound transit, surface operations, and return stages as the full simulation. The astronaut tutor is accessed from its map icon, while Flight School contains six optional lessons. **Mission Simulation** opens custom mission setup.
+
+Mission Simulation lets learners configure destination, scenario, crew size, full or specialist control, selected specialty, duration, difficulty, objective, base name, and a reproducible seed. The seed is used to replay modeled outcomes for comparison, not to estimate real mission risk.
+
+Education includes bilingual science tips and proactive low-resource warnings. The optional astronaut tutor and simulation robot answer questions using the local rule-based guide, or the optional Google Gemini API configured through the server-side settings in `.env.example`; assistants guide decisions but do not change game state on the learner’s behalf. The simulation robot’s name and appearance are customizable and saved on-device.
+
+Both modes include an interactive outbound spacecraft leg before base operations and a return-flight decision after the surface phase. Decisions appear in an animated cockpit-window view with a side console. The four crew roles must reach consensus on each transit route as well as on event responses. Transit choices trade energy and food against fatigue or health. Those resource changes remain part of the mission results. Mission Simulation includes additional thermal-drop and habitat-isolation conditions with scenario-specific emergencies.
+
 ## 🎮 How to Play
 
 ### Start Screen
-1. Choose **Moon** or **Mars**
-2. Pick **difficulty** (Easy/Normal/Hard)
-3. Select **mission length** (10, 30, or 60 operating cycles)
-4. Enter **base name** (optional)
-5. Click **Start Mission**
+1. Choose **Education** for the preset learning mission or **Mission Simulation** for custom setup.
+2. For simulation, choose **destination, scenario, crew, control mode, specialty, duration, difficulty, objective, and seed**.
+3. Enter a base name and start the mission.
 
 ### Gameplay
-- **Each cycle** = one decision point
-- **Actions**: Maintenance, Research, Rest, Exploration, or use the forecast
-- **Random events** may occur (emergencies to resolve)
+- Each mission day has a fictional **06:00–22:00 activity window** and a fixed **22:00–06:00 crew sleep period**.
+- Schedule multiple activities before bedtime: maintenance (2 h), research (3 h), rest (2 h), or exploration (5 h). Construction takes 3 h; operating a facility takes 1 h.
+- End the work shift to wait until 22:00 if the remaining time cannot fit another activity. Sleeping applies daily life-support use, crew recovery, and mission events before the next day starts.
+- Choose **full crew control** or lead one specialty. In specialist mode, the onboard assistant manages supporting crew work, handles their event votes, and requests approval before a critical end-of-day support plan.
+- Seeded, replayable events may occur; consult the crew-role advice, compare choices, and reach a four-role consensus before responding.
 - **Goal**: Survive your mission length without resources hitting zero
 
 ### Winning
 - If you survive the full mission duration → **Victory!** 🎉
-- If any life-support resource hits 0 → **Mission Failed** 💔
+- If any life-support resource reaches 0 → crew evacuation. The debrief identifies the depleted resource and how to reduce that risk in a future run.
 - Either way, your result gets saved to the leaderboard
 
 ---
 
 ## 🏗️ How the Game Engine Works
+
+Every event and expedition is reproducible with the same mission seed and cycle. This makes outcomes comparable rather than unpredictable; the model still contains simplified seeded probabilities and does not represent real operational risk.
+
+### Crew roles and team decisions
+
+- **Commander**: mission objectives and crew safety.
+- **Power engineer**: energy budget and facility loads.
+- **Biologist**: food production and crew health.
+- **Water officer**: water reserves, recycling, and leaks.
+
+The crew council shows localized resource-based advice. In full-control mode, emergency choices are committed only after all four roles agree; in specialist mode, the player confirms the choice while the assistant coordinates the other roles. This is an on-device team exercise, not online multiplayer. The decision-pattern panel summarizes player activities from the current local mission log, not assistant work.
 
 ### Resource System
 ```
@@ -109,7 +130,7 @@ Players realize:
 - Short-term fixes may cause long-term problems
 - Different difficulties aren't just harder—they change strategy
 
-The guided mission tutorial walks through forecasting, maintenance, food production, crew recovery, and research. Each step explains the decision, its trade-off, and how to verify its effect in the simulation.
+The guided mission tutorial walks through forecasting, maintenance, food production, crew recovery, and research. Each step explains the decision, its trade-off, and how to verify its effect in the simulation. In Flight School, periodic lesson facts appear every three completed cycles.
 
 ---
 

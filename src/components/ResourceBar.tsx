@@ -1,5 +1,5 @@
-import type { Resources } from '../game/model'
-import { RESOURCE_META } from '../game/resources'
+import type { ResourceName, Resources } from '../game/model'
+import { formatResourceValue, RESOURCE_META } from '../game/resources'
 
 interface Props {
   resources: Resources
@@ -11,14 +11,15 @@ export function ResourceBar({ resources, language, energyCapacity }: Props) {
   return (
     <section className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5" aria-label={language === 'ar' ? 'حالة الموارد' : 'Resource status'}>
       {Object.entries(RESOURCE_META).map(([id, meta]) => {
-        const value = resources[id as keyof typeof RESOURCE_META]
+        const resource = id as ResourceName
+        const value = resources[resource]
         const capacity = id === 'energy' ? energyCapacity : 100
         const tone = value <= capacity * 0.25 ? 'resource-danger' : value <= capacity * 0.5 ? 'resource-warn' : 'resource-safe'
         const reading = id === 'health'
-          ? `${Math.round(value)}%`
+          ? formatResourceValue(resource, value, language)
           : id === 'energy'
-            ? `${Math.round(value)}/${capacity} SU`
-            : `${Math.round(value)} SU`
+            ? `${formatResourceValue(resource, value, language)} / ${capacity} kWh`
+            : formatResourceValue(resource, value, language)
         return (
           <article key={id} className="glass-panel min-w-0 p-3 sm:p-4">
             <div className="mb-3 flex items-center justify-between gap-2">
@@ -27,10 +28,17 @@ export function ResourceBar({ resources, language, energyCapacity }: Props) {
               </span>
               <span className={`tabular-nums text-sm font-black ${value <= capacity * 0.25 ? 'text-rose-300' : 'text-slate-100'}`}>{reading}</span>
             </div>
-            <div className="h-2 overflow-hidden rounded-full bg-white/[0.07]">
+            <div
+              className="h-2 overflow-hidden rounded-full bg-white/[0.07]"
+              role="meter"
+              aria-label={`${meta.label[language]} · ${reading}`}
+              aria-valuemin={0}
+              aria-valuemax={capacity}
+              aria-valuenow={Math.round(value)}
+            >
               <div className={`resource-fill h-full rounded-full transition-[width] duration-700 ${tone}`} style={{ width: `${Math.max(0, Math.min(100, value / capacity * 100))}%` }} />
             </div>
-            <p className="mt-2 text-[10px] text-slate-600">{language === 'ar' ? (id === 'health' ? 'تقدير نسبي' : 'وحدات محاكاة') : (id === 'health' ? 'RELATIVE ESTIMATE' : 'SIMULATION UNITS')}</p>
+            <p className="mt-2 text-[10px] text-slate-600">{language === 'ar' ? 'قيمة تقديرية تعليمية' : 'EDUCATIONAL ESTIMATE'}</p>
           </article>
         )
       })}

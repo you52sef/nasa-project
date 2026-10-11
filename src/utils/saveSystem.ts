@@ -1,10 +1,10 @@
-import type { Destination, GameState, MissionDifficulty, MissionObjective } from '../game/model'
+import type { ControlMode, CrewRole, Destination, GameState, MissionDifficulty, MissionMode, MissionObjective } from '../game/model'
 import type { ScenarioId } from '../game/scenarios'
 
 const SAVE_KEY = 'little-orbit-save-v1'
 const SETUP_KEY = 'little-orbit-setup-v1'
 
-export type MissionSetup = Pick<GameState, 'destination' | 'crewSize' | 'maxDays' | 'difficulty' | 'objective' | 'missionSeed' | 'scenario'>
+export type MissionSetup = Pick<GameState, 'destination' | 'crewSize' | 'maxDays' | 'difficulty' | 'objective' | 'missionSeed' | 'scenario' | 'missionMode' | 'controlMode' | 'controlledRole'>
 
 function isDestination(value: unknown): value is Destination {
   return value === 'moon' || value === 'mars'
@@ -18,8 +18,21 @@ function isObjective(value: unknown): value is MissionObjective {
   return value === 'survival' || value === 'science' || value === 'exploration' || value === 'tutorial'
 }
 
+function isMissionMode(value: unknown): value is MissionMode {
+  return value === 'education' || value === 'simulation'
+}
+
+function isControlMode(value: unknown): value is ControlMode {
+  return value === 'full' || value === 'specialist'
+}
+
+function isCrewRole(value: unknown): value is CrewRole {
+  return value === 'commander' || value === 'power-engineer' || value === 'biologist' || value === 'water-officer'
+}
+
 function isScenario(value: unknown): value is ScenarioId {
-  return value === 'baseline' || value === 'dust-front' || value === 'water-rationing' || value === 'oxygen-shortage'
+  return value === 'baseline' || value === 'dust-front' || value === 'water-rationing' || value === 'oxygen-shortage' ||
+    value === 'solar-flare' || value === 'habitat-leak' || value === 'greenhouse-fault'
 }
 
 export function loadMissionSetup(): Partial<MissionSetup> {
@@ -35,6 +48,9 @@ export function loadMissionSetup(): Partial<MissionSetup> {
       ...(typeof value.maxDays === 'number' && [10, 30, 60].includes(value.maxDays) ? { maxDays: value.maxDays } : {}),
       ...(isDifficulty(value.difficulty) ? { difficulty: value.difficulty } : {}),
       ...(isObjective(value.objective) ? { objective: value.objective } : {}),
+      ...(isMissionMode(value.missionMode) ? { missionMode: value.missionMode } : {}),
+      ...(isControlMode(value.controlMode) ? { controlMode: value.controlMode } : {}),
+      ...(isCrewRole(value.controlledRole) ? { controlledRole: value.controlledRole } : {}),
       ...(isScenario(value.scenario) ? { scenario: value.scenario } : {}),
       ...(typeof value.missionSeed === 'number' && Number.isInteger(value.missionSeed) && value.missionSeed >= 0 && value.missionSeed <= 0xffff_ffff
         ? { missionSeed: value.missionSeed }

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ArrowUpRight, Layers3, Power, X } from 'lucide-react'
 import type { KeyboardEvent, MouseEvent, PointerEvent } from 'react'
 import { BUILDINGS } from '../game/buildings'
@@ -6,12 +6,14 @@ import { canToggleBuilding, type Action, type GameState } from '../game/model'
 import { useGameStore } from '../store/gameStore'
 import { useSettingsStore } from '../store/settingsStore'
 import { SCENARIOS } from '../game/scenarios'
+import { EVENTS } from '../game/events'
 import ar from '../i18n/ar'
 import en from '../i18n/en'
 
 interface Props {
   state: GameState
   onAction: (action: Action) => void
+  onOpenAssistant: () => void
 }
 
 type MapSelection =
@@ -20,16 +22,17 @@ type MapSelection =
   | { kind: 'rover' }
   | { kind: 'crew'; index: number }
   | { kind: 'site' }
+  | { kind: 'assistant' }
 
 const facilitySites = [
-  { x: 335, y: 225 },
-  { x: 475, y: 210 },
-  { x: 550, y: 270 },
-  { x: 475, y: 330 },
-  { x: 335, y: 335 },
-  { x: 260, y: 280 },
-  { x: 405, y: 165 },
-  { x: 405, y: 380 },
+  { x: 280, y: 190 },
+  { x: 405, y: 155 },
+  { x: 525, y: 190 },
+  { x: 625, y: 260 },
+  { x: 620, y: 355 },
+  { x: 405, y: 410 },
+  { x: 270, y: 365 },
+  { x: 210, y: 260 },
 ]
 
 const terrainRidges = [
@@ -50,16 +53,42 @@ const mapStars = [
   { x: 316, y: 459, r: 1 }, { x: 42, y: 382, r: .9 },
 ]
 
-export function BaseView({ state, onAction }: Props) {
+export function BaseView({ state, onAction, onOpenAssistant }: Props) {
   const [selected, setSelected] = useState<MapSelection | null>(null)
   const [systemsOverlay, setSystemsOverlay] = useState(false)
+  const [eventCue, setEventCue] = useState<string | null>(null)
+  const eventCueTimer = useRef<number | null>(null)
   const language = useSettingsStore((store) => store.language)
   const toggleBuilding = useGameStore((store) => store.toggleBuilding)
   const t = language === 'ar' ? ar : en
   const isMoon = state.destination === 'moon'
   const scenario = state.scenario || 'baseline'
+  const weatherAffected = scenario === 'dust-front' || Boolean(
+    state.activeEvent && ['solar-storm', 'low-light', 'panel-dust'].includes(state.activeEvent.id),
+  )
   const arabic = language === 'ar'
   const offlineBuildings = state.offlineBuildings || []
+  const mapPeriod = state.hour < 8 ? 'dawn' : state.hour >= 20 ? 'night' : state.hour >= 17 ? 'dusk' : 'day'
+  const daylightProgress = Math.max(0, Math.min(1, (state.hour - 6) / 14))
+  const celestialTop = 36 - Math.sin(daylightProgress * Math.PI) * 23
+  const mapEvent = eventCue ? EVENTS.find((event) => event.id === eventCue) : undefined
+
+  useEffect(() => {
+    if (!state.activeEvent?.id) return
+    setEventCue(state.activeEvent.id)
+    if (eventCueTimer.current !== null) window.clearTimeout(eventCueTimer.current)
+    eventCueTimer.current = window.setTimeout(() => {
+      setEventCue(null)
+      eventCueTimer.current = null
+    }, 7_000)
+    return () => {
+      if (eventCueTimer.current !== null) window.clearTimeout(eventCueTimer.current)
+    }
+  }, [state.activeEvent?.id])
+
+  useEffect(() => () => {
+    if (eventCueTimer.current !== null) window.clearTimeout(eventCueTimer.current)
+  }, [])
   const select = (selection: MapSelection, extraClass = '') => ({
     role: 'button' as const,
     tabIndex: 0,
@@ -72,13 +101,23 @@ export function BaseView({ state, onAction }: Props) {
     onFocus: () => setSelected(selection),
     onClick: (event: MouseEvent<SVGGElement>) => {
       event.stopPropagation()
-      setSelected(selection)
+      if (selection.kind === 'assistant') {
+        setSelected(null)
+        onOpenAssistant()
+      } else {
+        setSelected(selection)
+      }
     },
     onKeyDown: (event: KeyboardEvent<SVGGElement>) => {
       if (event.key === 'Enter' || event.key === ' ') {
         event.preventDefault()
         event.stopPropagation()
-        setSelected(selection)
+        if (selection.kind === 'assistant') {
+          setSelected(null)
+          onOpenAssistant()
+        } else {
+          setSelected(selection)
+        }
       }
     },
   })
@@ -95,7 +134,7 @@ export function BaseView({ state, onAction }: Props) {
 
   return (
     <section className="glass-panel relative overflow-hidden" aria-label={t.siteMapLabel}>
-      <div className={`base-map-surface base-map-${scenario} relative isolate min-h-[390px] overflow-hidden sm:min-h-[500px] ${isMoon ? 'bg-[#555966]' : 'bg-[#714538]'}`}>
+      <div className={`base-map-surface base-map-${scenario} base-map-period-${mapPeriod} relative isolate min-h-[390px] overflow-hidden sm:min-h-[500px] ${isMoon ? 'bg-[#555966]' : 'bg-[#714538]'}`}>
         <svg
           className="absolute inset-0 h-full w-full"
           viewBox="0 0 800 500"
@@ -194,7 +233,7 @@ export function BaseView({ state, onAction }: Props) {
                 </circle>
               </g>
             ) : null}
-            {scenario === 'oxygen-shortage' ? (
+            {scenario === 'oxygen-shortage' || scenario === 'habitat-leak' ? (
               <g className="map-oxygen-alert">
                 <circle cx="405" cy="280" r="61" fill="none" stroke="#fb7185" strokeWidth="2" strokeDasharray="5 5" />
                 <circle cx="405" cy="280" r="73" fill="none" stroke="#fda4af" strokeOpacity=".75" strokeWidth="1" />
@@ -232,15 +271,6 @@ export function BaseView({ state, onAction }: Props) {
             </g>
           ) : null}
 
-          {state.lastAction === 'explore' ? (
-            <g key={`rover-run-${state.day}`} className="map-rover-run" aria-hidden="true">
-              <circle className="map-rover-halo" r="8" fill="#fbbf24" fillOpacity=".2" />
-              <circle r="3.5" fill={state.lastMessage.includes('نجحت الرحلة') ? '#86efac' : '#fb923c'} stroke="#fff7ed" strokeWidth="1">
-                <animateMotion dur="3.2s" repeatCount="1" fill="freeze" path="M493 342 C470 310 446 293 405 280 C330 260 225 278 140 327 C230 304 325 270 405 280" />
-              </circle>
-            </g>
-          ) : null}
-
           {mappedFacilities.map(({ id, index, position, building }) => {
             const isOffline = offlineBuildings.includes(id)
             return (
@@ -262,6 +292,14 @@ export function BaseView({ state, onAction }: Props) {
             </g>
           )})}
 
+          <g transform="translate(610 188) scale(.82)" filter="url(#shadow)" {...select({ kind: 'assistant' }, 'map-assistant-station')} aria-label={t.mapAssistantLabel}>
+            <circle r="28" fill="#0c1520" fillOpacity=".9" stroke="#a5f3fc" strokeWidth="1.5" />
+            <circle className="map-assistant-pulse" r="34" fill="none" stroke="#67e8f9" strokeWidth="1.2" />
+            <text className="map-assistant-avatar" y="5" textAnchor="middle" fontSize="16">{state.missionMode === 'education' ? '👩‍🚀' : '🤖'}</text>
+            <text y="43" textAnchor="middle" fill="#e0f2fe" fontSize="8" fontWeight="700">{t.mapAssistantLabel}</text>
+            <title>{t.mapAssistantLabel}</title>
+          </g>
+
           <g transform="translate(405 280)" filter="url(#shadow)" {...select({ kind: 'habitat' }, 'map-habitat')} aria-label={t.habitatLabel}>
             {selected?.kind === 'habitat' ? <circle r="58" fill="none" stroke="#facc15" strokeWidth="2" strokeDasharray="4 3" /> : null}
             <circle r="43" fill="#0c1520" fillOpacity=".76" stroke="#7dd3fc" strokeOpacity=".72" strokeWidth="2" />
@@ -272,9 +310,11 @@ export function BaseView({ state, onAction }: Props) {
             <title>{t.habitatLabel}</title>
           </g>
 
-          <g transform="translate(493 342) rotate(-24)" filter="url(#shadow)" {...select({ kind: 'rover' })} aria-label={t.roverLabel}>
+          <g key={`rover-${state.daysSurvived}`} transform="translate(520 390) rotate(-24)" filter="url(#shadow)" {...select({ kind: 'rover' })} aria-label={t.roverLabel}>
             <circle r="40" fill="transparent" pointerEvents="all" />
             {selected?.kind === 'rover' ? <circle r="43" fill="none" stroke="#facc15" strokeWidth="2" strokeDasharray="4 3" /> : null}
+            {state.lastAction === 'explore' ? <animateMotion dur="8.5s" repeatCount="1" fill="freeze" path="M0 0 C-28 -50 -66 -73 -115 -110 C-190 -130 -295 -112 -380 -63 C-290 -86 -195 -120 -115 -110 C-75 -80 -35 -40 0 0" /> : null}
+            <circle className="map-rover-halo" r="27" fill="none" stroke="#fbbf24" strokeOpacity=".45" strokeDasharray="3 5" pointerEvents="none" />
             <rect x="-17" y="-11" width="34" height="22" rx="6" fill="#d4a85f" stroke="#fff0c2" strokeWidth="1.5" />
             <rect x="-32" y="-8" width="12" height="16" fill="#7dd3fc" fillOpacity=".6" stroke="#dbeafe" />
             <rect x="20" y="-8" width="12" height="16" fill="#7dd3fc" fillOpacity=".6" stroke="#dbeafe" />
@@ -319,8 +359,20 @@ export function BaseView({ state, onAction }: Props) {
           <rect x="1" y="1" width="798" height="498" fill="none" stroke="#e2e8f0" strokeOpacity=".14" />
         </svg>
 
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-slate-950/45 via-transparent to-slate-950/55" />
-        <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-4 p-4 sm:p-6">
+        <div className={`pointer-events-none absolute inset-0 bg-gradient-to-b from-slate-950/45 via-transparent to-slate-950/55 ${mapPeriod === 'dawn' ? 'map-dawn-glow' : mapPeriod === 'dusk' ? 'map-sunset-glow' : mapPeriod === 'night' ? 'map-night-glow' : ''} ${weatherAffected ? 'map-dust-storm' : ''}`} />
+        <div className="map-celestial-track" aria-hidden="true">
+          <span className={`map-celestial map-celestial-${mapPeriod}`} style={{ left: `${8 + daylightProgress * 84}%`, top: `${celestialTop}%` }}>
+            {mapPeriod === 'night' ? '☾' : '☼'}
+          </span>
+        </div>
+        {mapEvent ? (
+          <div className={`map-event-cue map-event-${mapEvent.id}`} aria-hidden="true">
+            <span className="map-event-cue-pulse" />
+            <span className="map-event-cue-icon">{mapEvent.icon}</span>
+            <span>{mapEvent.title[language]}</span>
+          </div>
+        ) : null}
+        <div className="absolute inset-x-0 top-0 z-20 flex items-start justify-between gap-4 p-4 sm:p-6">
           <div className="max-w-[75%]">
             <p className="eyebrow"><span className="h-1.5 w-1.5 rounded-full bg-emerald-300" /> {t.siteSchematicLabel}</p>
             <h2 className="mt-2 truncate text-lg font-black text-white sm:text-2xl">{state.baseName}</h2>
@@ -328,7 +380,7 @@ export function BaseView({ state, onAction }: Props) {
               {labels.site} · {labels.lat} / {labels.lon}
             </p>
             <p className="mt-2 inline-flex items-center gap-2 border border-white/10 bg-slate-950/45 px-2 py-1 text-[9px] font-bold tracking-[.08em] text-amber-100/90 backdrop-blur">
-              <span className={`h-1.5 w-1.5 rounded-full ${scenario === 'oxygen-shortage' ? 'bg-rose-300' : scenario === 'water-rationing' ? 'bg-cyan-300' : scenario === 'dust-front' ? 'bg-orange-300' : 'bg-emerald-300'}`} />
+              <span className={`h-1.5 w-1.5 rounded-full ${scenario === 'oxygen-shortage' || scenario === 'habitat-leak' ? 'bg-rose-300' : scenario === 'water-rationing' ? 'bg-cyan-300' : scenario === 'dust-front' || scenario === 'solar-flare' ? 'bg-orange-300' : 'bg-emerald-300'}`} />
               {SCENARIOS[scenario].name[language]}
             </p>
           </div>
@@ -366,6 +418,7 @@ export function BaseView({ state, onAction }: Props) {
           onDismiss={() => setSelected(null)}
           onAction={onAction}
           onToggleBuilding={toggleBuilding}
+          onOpenAssistant={onOpenAssistant}
         />
       ) : null}
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/[0.06] bg-slate-950/70 px-4 py-2.5">
@@ -389,6 +442,7 @@ function MapObjectInfo({
   onDismiss,
   onAction,
   onToggleBuilding,
+  onOpenAssistant,
 }: {
   selection: MapSelection
   state: GameState
@@ -396,6 +450,7 @@ function MapObjectInfo({
   onDismiss: () => void
   onAction: (action: Action) => void
   onToggleBuilding: (buildingId: string) => void
+  onOpenAssistant: () => void
 }) {
   const arabic = language === 'ar'
   const t = language === 'ar' ? ar : en
@@ -405,7 +460,8 @@ function MapObjectInfo({
     selection.kind === 'habitat' ? t.habitatModuleLabel
       : selection.kind === 'rover' ? t.surfaceRoverLabel
         : selection.kind === 'crew' ? t.mapCrewMemberLabel.replace('{number}', String(selection.index + 1))
-          : t.mapScienceSiteLabel
+          : selection.kind === 'assistant' ? t.mapAssistantLabel
+            : t.mapScienceSiteLabel
   )
   const description = building?.description[language] ?? (
     selection.kind === 'habitat'
@@ -414,7 +470,9 @@ function MapObjectInfo({
         ? t.roverMapInfo
         : selection.kind === 'crew'
           ? t.crewMapInfo
-          : t.siteMapInfo
+          : selection.kind === 'assistant'
+            ? t.mapAssistantDescription
+            : t.siteMapInfo
   )
   const production = building
     ? Object.entries(building.production)
@@ -429,7 +487,7 @@ function MapObjectInfo({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-[9px] font-bold tracking-[.16em] text-sky-200">{t.selectedObject}</p>
-          <h3 className="mt-1 truncate text-sm font-black text-white">{building?.icon || (selection.kind === 'rover' ? '🛰️' : selection.kind === 'crew' ? '🧑‍🚀' : selection.kind === 'site' ? '🔬' : '🏠')} {name}</h3>
+          <h3 className="mt-1 truncate text-sm font-black text-white">{building?.icon || (selection.kind === 'assistant' ? (state.missionMode === 'education' ? '👩‍🚀' : '🤖') : selection.kind === 'rover' ? '🛰️' : selection.kind === 'crew' ? '🧑‍🚀' : selection.kind === 'site' ? '🔬' : '🏠')} {name}</h3>
         </div>
         <button type="button" onClick={onDismiss} className="rounded-lg p-1 text-slate-400 hover:bg-white/10 hover:text-white" aria-label={t.close}><X size={15} /></button>
       </div>
@@ -446,7 +504,11 @@ function MapObjectInfo({
         </>
       ) : null}
       <div className="mt-3 flex gap-2">
-        {building ? (
+        {selection.kind === 'assistant' ? (
+          <button type="button" onClick={onOpenAssistant} className="primary-button min-h-9 flex-1 !px-2 !py-2 text-[10px]">
+            {t.openAssistant}
+          </button>
+        ) : building ? (
           <button
             type="button"
             onClick={() => onToggleBuilding(building.id)}

@@ -1,8 +1,9 @@
-import type { GameState, ResourceName } from '../game/model'
+import type { Action, GameState, ResourceName } from '../game/model'
 import { BUILDINGS } from '../game/buildings'
 import { RESOURCE_META } from '../game/resources'
-import { calculateMissionScore, getObjectiveProgress, getObjectiveTarget, isObjectiveComplete } from '../game/model'
+import { analyzeMissionBehavior, calculateMissionScore, getObjectiveProgress, getObjectiveTarget, isObjectiveComplete } from '../game/model'
 import { SCENARIOS } from '../game/scenarios'
+import { EVENTS } from '../game/events'
 
 export async function downloadMissionReport(state: GameState, language: 'ar' | 'en' = 'ar'): Promise<void> {
   const isArabic = language === 'ar'
@@ -45,11 +46,28 @@ export async function downloadMissionReport(state: GameState, language: 'ar' | '
         log: 'سجل المهمة',
         lessons: 'الدروس المكتملة',
         seed: 'بذرة المحاكاة',
-        disclaimer: 'الموارد بوحدات محاكاة نسبية وليست قياسات هندسية فعلية.',
-        actions: { research: 'بحث علمي', explore: 'رحلة استكشافية', maintenance: 'صيانة', rest: 'راحة' },
+        disclaimer: 'الوحدات الفيزيائية تقديرية تعليمية وليست قياسات هندسية معتمدة.',
+        actions: { research: 'بحث علمي', explore: 'رحلة استكشافية', maintenance: 'صيانة', rest: 'راحة' } satisfies Record<Action, string>,
         difficulties: { easy: 'سهل', normal: 'متوسط', hard: 'صعب' },
         objectives: { survival: 'البقاء', science: 'العلوم', exploration: 'الاستكشاف', tutorial: 'التدريب التفاعلي' },
         cycle: 'الدورة',
+        behavior: 'تحليل سلوك القرارات',
+        eventResponses: 'استجابات الأحداث المسجلة',
+        assistantActions: 'أنشطة نسقها المساعد',
+        failureCause: 'سبب الإخلاء',
+        failurePrevention: 'ما الذي كان يمكن فعله؟',
+        transitSource: 'قرار المركبة',
+        outbound: 'رحلة الذهاب',
+        return: 'رحلة العودة',
+        conservative: 'نمط محافظ',
+        efficient: 'نمط كفء',
+        failureAdvice: {
+          energy: 'نفدت الطاقة قبل تغطية الاستهلاك. راقب التوقع وخفّض الأحمال وحسّن التوليد أو التخزين.',
+          oxygen: 'نفد الأكسجين. أبقِ نظام دعم الحياة عاملًا وقلل الأنشطة المستهلكة للأكسجين.',
+          water: 'نفد الماء. عالج التسرب وراقب الاستهلاك وابنِ معيد تدوير المياه.',
+          food: 'نفد الغذاء. ابنِ الدفيئة مبكرًا ووازن استهلاك المؤن.',
+          health: 'وصلت صحة الطاقم إلى الصفر. خطط للراحة وقلل المخاطر واستخدم الحماية المتاحة.',
+        } satisfies Record<ResourceName, string>,
       }
     : {
         report: 'Mission report',
@@ -80,11 +98,28 @@ export async function downloadMissionReport(state: GameState, language: 'ar' | '
         log: 'Mission log',
         lessons: 'Lessons completed',
         seed: 'Replayable simulation seed',
-        disclaimer: 'Resources are relative simulation units, not real engineering measurements.',
-        actions: { research: 'Research', explore: 'Expedition', maintenance: 'Maintenance', rest: 'Rest' },
+        disclaimer: 'Physical units are educational estimates, not validated engineering measurements.',
+        actions: { research: 'Research', explore: 'Expedition', maintenance: 'Maintenance', rest: 'Rest' } satisfies Record<Action, string>,
         difficulties: { easy: 'Easy', normal: 'Normal', hard: 'Hard' },
         objectives: { survival: 'Survival', science: 'Science', exploration: 'Exploration', tutorial: 'Guided tutorial' },
         cycle: 'Cycle',
+        behavior: 'Decision behavior analysis',
+        eventResponses: 'Recorded event responses',
+        assistantActions: 'Assistant-managed activities',
+        failureCause: 'Evacuation cause',
+        failurePrevention: 'What could have prevented it?',
+        transitSource: 'Flight decision',
+        outbound: 'Outbound leg',
+        return: 'Return leg',
+        conservative: 'Conservative profile',
+        efficient: 'Efficient profile',
+        failureAdvice: {
+          energy: 'Energy ran out before demand was covered. Review forecasts, reduce loads, and improve or store power.',
+          oxygen: 'Oxygen ran out. Keep life support online and limit oxygen-intensive activities.',
+          water: 'Water ran out. Repair leaks, monitor use, and build a water recycler.',
+          food: 'Food ran out. Build the greenhouse early and balance ration use.',
+          health: 'Crew health reached zero. Schedule rest, reduce risk, and use available protection.',
+        } satisfies Record<ResourceName, string>,
       }
 
   const planet = state.destination === 'moon' ? (isArabic ? 'القمر' : 'Moon') : (isArabic ? 'المريخ' : 'Mars')
@@ -97,6 +132,15 @@ export async function downloadMissionReport(state: GameState, language: 'ar' | '
   const objectiveTarget = getObjectiveTarget(state)
   const objectiveStatus = isObjectiveComplete(state) ? labels.complete : labels.incomplete
   const score = calculateMissionScore(state)
+  const actionCounts = analyzeMissionBehavior(state.actionHistory || [])
+  const failureResource = state.failureCause?.resource || (['energy', 'oxygen', 'water', 'food', 'health'] as const)
+    .find((resource) => state.resources[resource] <= 0)
+  const failedEvent = state.failureCause?.eventId
+    ? EVENTS.find((event) => event.id === state.failureCause?.eventId)
+    : undefined
+  const failedChoice = failedEvent && state.failureCause?.choiceIndex !== undefined
+    ? failedEvent.choices[state.failureCause.choiceIndex]
+    : undefined
   const resources: ResourceName[] = ['energy', 'oxygen', 'water', 'food', 'health']
   const buildings = state.buildings.map((id) => `${BUILDINGS[id]?.icon || ''} ${BUILDINGS[id]?.name[language] || id}`.trim())
   const logEntries = state.log.map((entry) => {
@@ -137,7 +181,7 @@ export async function downloadMissionReport(state: GameState, language: 'ar' | '
   const cardRows = Math.ceil(6 / 3)
   const logLineRows = logEntries.reduce((count, entry) => count + wrapText(entry, contentWidth - 48, 20).length, 0)
   const buildingRows = Math.max(1, Math.ceil(buildings.length / 2))
-  const height = 1220 + cardRows * 116 + logLineRows * 34 + buildingRows * 62 + (state.missionResult === 'ended' ? 40 : 0)
+  const height = 1420 + cardRows * 116 + logLineRows * 34 + buildingRows * 62 + (state.missionResult === 'ended' ? 40 : 0) + (state.missionResult === 'evacuation' ? 170 : 0)
   canvas.width = width
   canvas.height = height
 
@@ -226,6 +270,35 @@ export async function downloadMissionReport(state: GameState, language: 'ar' | '
   drawText(`${Math.min(objectiveProgress, objectiveTarget)} / ${objectiveTarget}`, startX, y + 38, 19, '#94a3b8', 500, 'ltr')
   y += 68
 
+  y = drawSection(labels.behavior, y)
+  for (const action of ['research', 'explore', 'maintenance', 'rest'] as const) {
+    drawText(`${labels.actions[action]}: ${actionCounts[action]}`, startX, y, 18, '#cbd5e1')
+    y += 28
+  }
+  drawText(`${labels.eventResponses}: ${state.eventHistory?.length || 0}`, startX, y, 18, '#94a3b8')
+  y += 40
+  if (state.assistantActionHistory?.length) {
+    drawText(`${labels.assistantActions}: ${state.assistantActionHistory.length}`, startX, y, 18, '#94a3b8')
+    y += 36
+  }
+
+  if (state.missionResult === 'evacuation') {
+    y = drawSection(labels.failureCause, y)
+    if (failureResource) {
+      drawText(`${RESOURCE_META[failureResource].label[language]} · ${labels.failureAdvice[failureResource]}`, startX, y, 18, '#fda4af')
+      y += 48
+    }
+    drawText(labels.failurePrevention, startX, y, 18, '#86efac')
+    y += 34
+    if (failedEvent && failedChoice) {
+      drawText(`${failedEvent.title[language]} · ${failedChoice.label[language]}`, startX, y, 17, '#cbd5e1')
+      y += 36
+    } else if (state.failureCause?.source === 'transit' && state.failureCause.transitLeg && state.failureCause.transitChoice) {
+      drawText(`${labels.transitSource}: ${labels[state.failureCause.transitLeg]} · ${labels[state.failureCause.transitChoice]}`, startX, y, 17, '#cbd5e1')
+      y += 36
+    }
+  }
+
   y = drawSection(labels.remaining, y)
   drawText(labels.disclaimer, startX, y, 16, '#94a3b8')
   y += 38
@@ -235,8 +308,10 @@ export async function downloadMissionReport(state: GameState, language: 'ar' | '
     const column = index % 3
     const row = Math.floor(index / 3)
     const label = RESOURCE_META[key].label[language]
-    const suffix = key === 'health' ? '%' : ' SU'
-    drawCard(left + column * (resourceWidth + resourceGap), y + row * 96, resourceWidth, 82, label, `${Math.round(state.resources[key])}${suffix}`)
+    const unit = RESOURCE_META[key].unit
+    const amount = new Intl.NumberFormat(language, { maximumFractionDigits: key === 'health' ? 0 : 1 }).format(state.resources[key])
+    const suffix = unit === '%' ? '%' : ` ${unit}`
+    drawCard(left + column * (resourceWidth + resourceGap), y + row * 96, resourceWidth, 82, label, `${amount}${suffix}`)
   })
   drawCard(left + resourceWidth + resourceGap, y + 192, resourceWidth, 82, labels.credits, String(state.resources.credits))
   drawCard(left + (resourceWidth + resourceGap) * 2, y + 192, resourceWidth, 82, labels.cargo, String(state.resources.cargo))

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, ArrowLeft, ArrowRight, Moon, Rocket, Shuffle, Volume2, VolumeX } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, ArrowRight, Copy, Moon, Rocket, Shuffle, Volume2, VolumeX } from 'lucide-react'
 import ar from '../i18n/ar'
 import en from '../i18n/en'
 import { useGameStore } from '../store/gameStore'
@@ -7,7 +7,10 @@ import { useSettingsStore } from '../store/settingsStore'
 import { LanguageSwitch } from './LanguageSwitch'
 import { ModelDisclosure } from './ModelDisclosure'
 import { SCENARIOS, type ScenarioId } from '../game/scenarios'
+import { getAvailableCrewRoles } from '../game/teamwork'
+import { EVENTS } from '../game/events'
 import { useSound } from '../hooks/useSound'
+import { estimateTransfer } from '../game/flightPhysics'
 
 export function StartScreen() {
   const language = useSettingsStore((state) => state.language)
@@ -19,8 +22,14 @@ export function StartScreen() {
   const difficulty = useGameStore((state) => state.difficulty)
   const objective = useGameStore((state) => state.objective)
   const scenario = useGameStore((state) => state.scenario)
+  const missionMode = useGameStore((state) => state.missionMode)
+  const controlMode = useGameStore((state) => state.controlMode)
+  const controlledRole = useGameStore((state) => state.controlledRole)
   const missionSeed = useGameStore((state) => state.missionSeed)
   const setDestination = useGameStore((state) => state.setDestination)
+  const setMissionMode = useGameStore((state) => state.setMissionMode)
+  const setControlMode = useGameStore((state) => state.setControlMode)
+  const setControlledRole = useGameStore((state) => state.setControlledRole)
   const setCrewSize = useGameStore((state) => state.setCrewSize)
   const setBaseName = useGameStore((state) => state.setBaseName)
   const setMissionLength = useGameStore((state) => state.setMissionLength)
@@ -35,17 +44,30 @@ export function StartScreen() {
   const [loadError, setLoadError] = useState('')
   const [launching, setLaunching] = useState(false)
   const [confirmNewMission, setConfirmNewMission] = useState(false)
-  const launchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [modeChosen, setModeChosen] = useState(false)
+  const [seedCopied, setSeedCopied] = useState(false)
   const launchButtonRef = useRef<HTMLButtonElement>(null)
   const cancelConfirmationRef = useRef<HTMLButtonElement>(null)
   const confirmMissionRef = useRef<HTMLButtonElement>(null)
   const { soundEnabled, toggleSound, playLaunch, playScenario } = useSound()
   const isArabic = language === 'ar'
   const DirectionIcon = isArabic ? ArrowLeft : ArrowRight
+  const transferEstimate = estimateTransfer(destination === 'moon' ? 'earth-moon' : 'earth-mars')
 
-  useEffect(() => () => {
-    if (launchTimer.current) clearTimeout(launchTimer.current)
-  }, [])
+  const chooseMode = (mode: 'education' | 'simulation') => {
+    setMissionMode(mode)
+    setModeChosen(true)
+    if (mode === 'education') {
+      setDestination('moon')
+      setCrewSize(2)
+      setMissionLength(10)
+      setDifficulty('easy')
+      setScenario('baseline')
+      setObjective('tutorial')
+    } else if (objective === 'tutorial') {
+      setObjective('survival')
+    }
+  }
 
   useEffect(() => {
     if (!confirmNewMission) return
@@ -72,15 +94,13 @@ export function StartScreen() {
     setConfirmNewMission(false)
     setLoadError('')
     setLaunching(true)
-    playLaunch(scenario)
-    launchTimer.current = setTimeout(() => {
-      try {
-        startMission()
-      } catch (error) {
-        setLaunching(false)
-        setLoadError(error instanceof Error ? error.message : 'Could not start a new mission.')
-      }
-    }, window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 500 : 3400)
+    try {
+      playLaunch(scenario)
+      startMission()
+    } catch (error) {
+      setLaunching(false)
+      setLoadError(error instanceof Error ? error.message : 'Could not start a new mission.')
+    }
   }
 
   const handleLaunch = () => {
@@ -96,9 +116,32 @@ export function StartScreen() {
     beginLaunch()
   }
 
+  const copySeed = async () => {
+    try {
+      await navigator.clipboard.writeText(String(missionSeed))
+      setSeedCopied(true)
+      window.setTimeout(() => setSeedCopied(false), 1800)
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : 'Could not copy the mission seed.')
+    }
+  }
+
   return (
-    <main className="mission-start relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-8 text-white">
+    <main className="mission-start relative flex min-h-screen items-center justify-center overflow-hidden px-4 pb-8 pt-24 text-white sm:pt-28" dir={isArabic ? 'rtl' : 'ltr'}>
       <div className="orbit-glow pointer-events-none absolute inset-0" />
+      <header className="astra-command-header">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="astra-insignia" aria-hidden="true"><span>A</span></div>
+          <div className="min-w-0">
+            <p className="astra-brand-name">ASTRA ONE · MISSION CONTROL</p>
+            <p className="astra-brand-subtitle">{t.trainingSimulatorLabel}</p>
+          </div>
+        </div>
+        <div className="astra-header-status" dir="ltr">
+          <span className="astra-status-indicator" />
+          {isArabic ? 'النظام جاهز · اختر المهمة' : 'SYSTEM READY · SELECT MISSION'}
+        </div>
+      </header>
       <section className="mission-start-card relative z-10 grid w-full max-w-6xl overflow-hidden rounded-[1.25rem] border border-white/10 bg-[#141510] lg:grid-cols-[1fr_0.92fr]">
         <div className="mission-start-copy relative flex min-h-[330px] flex-col justify-between overflow-hidden border-e border-white/[0.06] bg-[#171712] p-7 sm:p-11 lg:min-h-[650px]">
           <div className="relative flex items-center justify-between">
@@ -116,16 +159,47 @@ export function StartScreen() {
               <LanguageSwitch />
             </div>
           </div>
-          <div className="relative my-12">
-            <div
-              className={`mission-planet mission-planet-${destination} mb-8`}
-              role="img"
-              aria-label={destination === 'moon' ? t.moon : t.mars}
-            >
-              <span className="planet-surface" />
-              <span className="planet-orbit" aria-hidden="true">
-                <span className="planet-satellite" />
-              </span>
+          <div className="relative my-6 sm:my-8">
+            <div className="mission-orbit-scene" role="img" aria-label={`${t.homePlanet} → ${destination === 'moon' ? t.moon : t.mars}`}>
+              <svg className="mission-transfer-map" viewBox="0 0 420 210" fill="none" aria-hidden="true">
+                <defs>
+                  <linearGradient id="transfer-route-gradient" x1="52" y1="155" x2="337" y2="73" gradientUnits="userSpaceOnUse">
+                    <stop stopColor="#7CE4DC" stopOpacity=".05" />
+                    <stop offset=".52" stopColor="#7CE4DC" stopOpacity=".75" />
+                    <stop offset="1" stopColor="#F1C28A" stopOpacity=".28" />
+                  </linearGradient>
+                  <filter id="transfer-node-glow" x="-100%" y="-100%" width="300%" height="300%">
+                    <feGaussianBlur stdDeviation="3" result="blur" />
+                    <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+                  </filter>
+                </defs>
+                <ellipse className="mission-orbit-ring" cx="90" cy="105" rx="60" ry="35" transform="rotate(-27 90 105)" />
+                <ellipse className="mission-orbit-ring mission-orbit-ring-target" cx="331" cy="97" rx="78" ry="43" transform="rotate(-27 331 97)" />
+                <path className="mission-transfer-trail" d="M52 154C107 32 234 24 336 76" stroke="url(#transfer-route-gradient)" strokeDasharray="4 7" />
+                <circle className="mission-orbit-origin" cx="69" cy="142" r="5" />
+                <circle className="mission-orbit-ping" cx="69" cy="142" r="5" filter="url(#transfer-node-glow)" />
+                <circle className="mission-transfer-craft" r="3.5" fill="#E9FFFF" filter="url(#transfer-node-glow)">
+                  <animateMotion dur="8s" repeatCount="indefinite" path="M52 154C107 32 234 24 336 76" />
+                </circle>
+              </svg>
+              <div className="mission-orbit-origin-label" dir="ltr">{t.homePlanet}</div>
+              <div
+                className={`mission-planet mission-planet-${destination}`}
+                role="img"
+                aria-label={destination === 'moon' ? t.moon : t.mars}
+              >
+                <span className="planet-surface" />
+                <span className="planet-orbit" aria-hidden="true">
+                  <span className="planet-satellite" />
+                </span>
+              </div>
+              <div className="mission-orbit-target-label">{destination === 'moon' ? t.moon : t.mars}</div>
+              <div className="mission-orbit-readout" dir="ltr"><span className="mission-live-dot" /> TRANSFER SOLUTION · IDEALIZED</div>
+            </div>
+            <div className="mission-telemetry-strip" dir={isArabic ? 'rtl' : 'ltr'}>
+              <div><span>{t.estimatedTransferTimeLabel}</span><b>{transferEstimate.durationDays.toFixed(1)} {t.days}</b></div>
+              <div><span>{t.departureDeltaVLabel}</span><b>{transferEstimate.departureDeltaVKmS.toFixed(2)} km/s</b></div>
+              <div><span>{t.requiredPhaseAngleLabel}</span><b>{transferEstimate.phaseAngleDegrees.toFixed(1)}°</b></div>
             </div>
             <p className="mb-3 text-xs font-bold tracking-[0.28em] text-cyan-200/80">ASTRA ONE / 01</p>
             <h1 className="max-w-xl text-5xl font-black leading-[0.98] tracking-tight sm:text-7xl">{t.title}</h1>
@@ -140,10 +214,92 @@ export function StartScreen() {
         <div className="p-6 sm:p-10 lg:p-12" dir={isArabic ? 'rtl' : 'ltr'}>
           <div className="mb-8">
             <p className="text-xs font-bold tracking-[0.2em] text-cyan-300">{t.flightPlanLabel}</p>
-            <h2 className="mt-2 text-2xl font-black sm:text-3xl">{t.newMission}</h2>
-            <p className="mt-2 text-xs text-slate-500">{maxDays} {t.operatingCyclesUnit} · {t.cycleSinglePlayerNote}</p>
-            <p className="mt-3 border-s border-cyan-200/40 bg-white/[0.02] px-3 py-2 text-xs leading-5 text-slate-400">{t.singlePlayerNote}</p>
+            <h2 className="mt-2 text-2xl font-black sm:text-3xl">{modeChosen ? (missionMode === 'education' ? t.educationSection : t.simulationSection) : t.chooseMode}</h2>
+            {modeChosen ? <p className="mt-2 text-xs text-slate-500">{missionMode === 'simulation' ? `${maxDays} ${t.operatingCyclesUnit} · ` : ''}{t.cycleSinglePlayerNote}</p> : null}
+            {modeChosen ? <p className="mt-3 border-s border-cyan-200/40 bg-white/[0.02] px-3 py-2 text-xs leading-5 text-slate-400">{t.singlePlayerNote}</p> : null}
           </div>
+
+          {!modeChosen ? (
+            <fieldset className="mb-7">
+              <legend className="mb-3 text-sm font-bold text-slate-200">{t.chooseMode}</legend>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {([
+                  { id: 'education' as const, title: t.educationSection, description: t.educationDescription, icon: '👩‍🚀', note: t.guidedRecommendation },
+                  { id: 'simulation' as const, title: t.simulationSection, description: t.simulationDescription, icon: '🛰️', note: t.simulationRecommendation },
+                ]).map((mode) => (
+                  <button
+                    key={mode.id}
+                    type="button"
+                    onClick={() => chooseMode(mode.id)}
+                    className="rounded-xl border border-white/10 bg-white/[0.02] p-4 text-start text-slate-300 transition hover:border-cyan-200/40 hover:bg-cyan-100/[0.05]"
+                  >
+                    <span className="text-xl">{mode.icon}</span>
+                    <span className="mt-2 block text-sm font-bold">{mode.title}</span>
+                    <span className="mt-1 block text-xs leading-5 text-slate-400">{mode.description}</span>
+                    <span className="mt-2 block text-[10px] leading-5 text-cyan-100/70">{mode.note}</span>
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+          ) : (
+            <>
+          <button type="button" onClick={() => setModeChosen(false)} className="secondary-button mb-5 !px-3 !py-2 text-xs">
+            {t.changeMissionMode}
+          </button>
+          <details className="mb-6 rounded-xl border border-sky-200/15 bg-sky-100/[0.035] p-4">
+            <summary className="cursor-pointer text-sm font-bold text-sky-100">{t.howToPlayTitle} · {t.eventGuideTitle}</summary>
+            <p className="mt-3 text-xs leading-6 text-slate-300">{t.howToPlaySteps}</p>
+            <p className="mt-2 text-xs leading-6 text-slate-400">{t.eventGuideSteps}</p>
+            <details className="mt-3 rounded-lg border border-white/[0.07] bg-slate-950/30 p-3">
+              <summary className="cursor-pointer text-xs font-bold text-slate-200">{t.eventPlaybookLabel} · {EVENTS.length}</summary>
+              <div className="mt-3 space-y-3">
+                {EVENTS.map((event) => (
+                  <article key={event.id} className="border-s border-amber-200/20 ps-3">
+                    <h3 className="text-xs font-bold text-amber-100">{event.icon} {event.title[language]}</h3>
+                    <p className="mt-1 text-[11px] leading-5 text-slate-400">{event.description[language]}</p>
+                    <ul className="mt-1 space-y-1 text-[11px] leading-5 text-slate-500">
+                      {event.choices.map((choice) => <li key={choice.label.en}>• {choice.label[language]}</li>)}
+                    </ul>
+                  </article>
+                ))}
+              </div>
+            </details>
+            <p className="mt-3 text-[11px] leading-5 text-amber-100/70">{t.failureGuide}</p>
+          </details>
+
+          {missionMode === 'simulation' ? <>
+          <fieldset className="mb-7">
+            <legend className="mb-3 text-sm font-bold text-slate-200">{t.controlStyleTitle}</legend>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {(['full', 'specialist'] as const).map((style) => (
+                <button
+                  key={style}
+                  type="button"
+                  onClick={() => setControlMode(style)}
+                  aria-pressed={controlMode === style}
+                  className={`rounded-xl border p-4 text-start transition ${controlMode === style ? 'border-cyan-200/50 bg-cyan-100/[0.07] text-cyan-50' : 'border-white/10 bg-white/[0.02] text-slate-300 hover:bg-white/[0.05]'}`}
+                >
+                  <span className="block text-sm font-bold">{style === 'full' ? t.fullControlTitle : t.specialistControlTitle}</span>
+                  <span className="mt-1 block text-xs leading-5 text-slate-400">{style === 'full' ? t.fullControlDescription : t.specialistControlDescription}</span>
+                </button>
+              ))}
+            </div>
+            {controlMode === 'specialist' ? (
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                {getAvailableCrewRoles(crewSize).map((role) => (
+                  <button
+                    key={role.id}
+                    type="button"
+                    onClick={() => setControlledRole(role.id)}
+                    aria-pressed={controlledRole === role.id}
+                    className={`rounded-lg border px-3 py-2 text-start text-xs transition ${controlledRole === role.id ? 'border-violet-200/50 bg-violet-100/[0.07] text-violet-100' : 'border-white/10 bg-white/[0.02] text-slate-400'}`}
+                  >
+                    {role.icon} {t[role.title]}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </fieldset>
 
           <fieldset className="mb-7">
             <legend className="mb-3 text-sm font-bold text-slate-200">{t.destination}</legend>
@@ -243,7 +399,7 @@ export function StartScreen() {
           <fieldset className="mb-6">
             <legend className="mb-2 text-sm font-bold text-slate-200">{t.missionObjective}</legend>
             <div className="grid gap-2">
-              {(['survival', 'science', 'exploration', 'tutorial'] as const).map((goal) => (
+              {(['survival', 'science', 'exploration'] as const).map((goal) => (
                 <button
                   key={goal}
                   type="button"
@@ -257,6 +413,13 @@ export function StartScreen() {
               ))}
             </div>
           </fieldset>
+          </> : (
+            <section className="mb-7 rounded-xl border border-cyan-200/15 bg-cyan-100/[0.035] p-4">
+              <p className="text-sm font-bold text-cyan-100">👩‍🚀 {t.educationSection}</p>
+              <p className="mt-2 text-xs leading-6 text-slate-300">{t.educationDescription}</p>
+              <p className="mt-2 text-xs leading-6 text-slate-400">{t.educationAssistantMapHint}</p>
+            </section>
+          )}
 
           <div className="mb-7">
             <label htmlFor="base-name" className="mb-2 block text-sm font-bold text-slate-200">
@@ -277,7 +440,7 @@ export function StartScreen() {
             />
           </div>
 
-          <div className="mb-7">
+          {missionMode === 'simulation' ? <div className="mb-7">
             <label htmlFor="mission-seed" className="mb-2 block text-sm font-bold text-slate-200">{t.scenarioSeed}</label>
             <div className="flex gap-2">
               <input
@@ -296,9 +459,12 @@ export function StartScreen() {
               <button type="button" onClick={randomizeMissionSeed} className="secondary-button !px-3" aria-label={t.randomizeSeed} title={t.randomizeSeed}>
                 <Shuffle size={16} />
               </button>
+              <button type="button" onClick={() => void copySeed()} className="secondary-button !px-3" aria-label={seedCopied ? t.seedCopied : t.copySeed} title={seedCopied ? t.seedCopied : t.copySeed}>
+                <Copy size={16} />
+              </button>
             </div>
-            <p className="mt-2 text-xs leading-5 text-slate-500">{t.seedDescription}</p>
-          </div>
+            <p className="mt-2 text-xs leading-5 text-slate-500">{seedCopied ? t.seedCopied : t.seedDescription}</p>
+          </div> : null}
 
           <button ref={launchButtonRef} type="button" onClick={handleLaunch} className="primary-button w-full" disabled={launching}>
             <Rocket size={18} />
@@ -325,6 +491,8 @@ export function StartScreen() {
               </div>
             </div>
           ) : null}
+            </>
+          )}
         </div>
       </section>
       <div className="absolute bottom-4 flex items-center gap-2 text-[10px] font-medium tracking-[0.24em] text-slate-600">
@@ -370,25 +538,6 @@ export function StartScreen() {
               </button>
             </div>
           </section>
-        </div>
-      ) : null}
-      {launching ? (
-        <div className="mission-launch-overlay" role="status" aria-live="assertive" dir={isArabic ? 'rtl' : 'ltr'}>
-          <div className={`launch-horizon ${destination === 'mars' ? 'launch-horizon-mars' : ''}`} />
-          <div className="launch-stars" aria-hidden="true" />
-          <div className="launch-caption">
-            <span className="eyebrow justify-center">{t.launchSequence}</span>
-            <h2>{baseName}</h2>
-            <p>{SCENARIOS[scenario].name[language]} · {destination === 'moon' ? t.moon : t.mars}</p>
-          </div>
-          <div className="launch-vehicle" aria-hidden="true">
-            <span className="launch-flame" />
-            <Rocket size={64} strokeWidth={1.25} />
-          </div>
-          <div className="launch-countdown" aria-label={t.launchCountdown} dir="ltr">
-            <span>T−03</span><span>T−02</span><span>T−01</span>
-          </div>
-          <p className="launch-status">{t.launching}</p>
         </div>
       ) : null}
     </main>

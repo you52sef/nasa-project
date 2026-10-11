@@ -84,6 +84,19 @@ export function useSound() {
         { frequency: 620, duration: 0.1, type: 'square', volume: 0.045 },
         { frequency: 740, duration: 0.16, type: 'square', volume: 0.045 },
       ],
+      'solar-flare': [
+        { frequency: 294, duration: 0.16, type: 'triangle', volume: 0.08 },
+        { frequency: 220, duration: 0.22, type: 'triangle', volume: 0.07 },
+      ],
+      'habitat-leak': [
+        { frequency: 520, duration: 0.09, type: 'square', volume: 0.045 },
+        { frequency: 420, duration: 0.12, type: 'square', volume: 0.05 },
+        { frequency: 520, duration: 0.09, type: 'square', volume: 0.045 },
+      ],
+      'greenhouse-fault': [
+        { frequency: 440, duration: 0.12, type: 'sine', volume: 0.07 },
+        { frequency: 330, duration: 0.15, type: 'sine', volume: 0.07 },
+      ],
     }
     play(cues[scenario])
   }, [play])
@@ -93,6 +106,9 @@ export function useSound() {
       'dust-front': 293.66,
       'water-rationing': 349.23,
       'oxygen-shortage': 440,
+      'solar-flare': 293.66,
+      'habitat-leak': 329.63,
+      'greenhouse-fault': 261.63,
     }
     play([
       { frequency: 72, endFrequency: 118, duration: 1.35, type: 'sawtooth', volume: 0.045 },

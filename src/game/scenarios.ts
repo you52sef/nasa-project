@@ -1,4 +1,4 @@
-export type ScenarioId = 'baseline' | 'dust-front' | 'water-rationing' | 'oxygen-shortage'
+export type ScenarioId = 'baseline' | 'dust-front' | 'water-rationing' | 'oxygen-shortage' | 'solar-flare' | 'habitat-leak' | 'greenhouse-fault'
 
 export interface ScenarioDefinition {
   id: ScenarioId
@@ -51,5 +51,35 @@ export const SCENARIOS: Record<ScenarioId, ScenarioDefinition> = {
     solarOutput: 18,
     waterUseMultiplier: 1,
     eventChanceMultiplier: 1.1,
+  },
+  'solar-flare': {
+    id: 'solar-flare',
+    icon: '☀',
+    name: { ar: 'نشاط شمسي مرتفع', en: 'Elevated solar activity' },
+    description: { ar: 'ابدأ بطاقة وصحة أقل، مع احتمال أكبر لحدث شمسي.', en: 'Begin with lower energy and crew health, with a higher chance of a solar event.' },
+    startingResources: { energy: 68, health: 82 },
+    solarOutput: 16,
+    waterUseMultiplier: 1,
+    eventChanceMultiplier: 1.25,
+  },
+  'habitat-leak': {
+    id: 'habitat-leak',
+    icon: '🫧',
+    name: { ar: 'خلل في ضغط الموئل', en: 'Habitat pressure fault' },
+    description: { ar: 'مخزون أكسجين أقل ومخاطر تشغيلية أعلى تتطلب مراقبة أنظمة الحياة.', en: 'Reduced oxygen stores and increased operational risk demand close life-support monitoring.' },
+    startingResources: { oxygen: 66, energy: 76 },
+    solarOutput: 18,
+    waterUseMultiplier: 1,
+    eventChanceMultiplier: 1.25,
+  },
+  'greenhouse-fault': {
+    id: 'greenhouse-fault',
+    icon: '🌱',
+    name: { ar: 'تعطل الدفيئة', en: 'Greenhouse fault' },
+    description: { ar: 'مخزون غذاء محدود واحتمال أعلى لأحداث المحاصيل والدفيئة.', en: 'Limited food stores and a higher chance of crop and greenhouse incidents.' },
+    startingResources: { food: 62, water: 76 },
+    solarOutput: 18,
+    waterUseMultiplier: 1.08,
+    eventChanceMultiplier: 1.25,
   },
 }

@@ -19,10 +19,10 @@ The game uses **Arabic and English**, supports **offline play**, has **sound eff
 **The Challenge**: Most STEM education oversimplifies engineering trade-offs. Real missions involve complex interdependencies that aren't fun if presented abstractly.
 
 **Our Solution**: Make those trade-offs **tangible and fun** by putting players in control of a working base where:
-- Energy production affects oxygen generation
-- Crew morale impacts food consumption
-- Choosing maintenance over research gives short-term stability but loses science points
-- Every decision has consequences
+- Facility and crew demand compete for limited energy, water, oxygen, and food
+- Rest improves modeled crew health and readiness but also uses supplies
+- Choosing maintenance over research conserves resources but earns no research science
+- Seeded events and the player's recorded actions shape each run
 
 This makes kids **experience** engineering in their guts, not just understand it in their heads.
 
@@ -30,27 +30,29 @@ This makes kids **experience** engineering in their guts, not just understand it
 
 ## 🎮 Two Parts: Learn and Simulate
 
-The first screen offers two paths. **Education** starts a simplified 10-cycle Moon mission with a small crew and low difficulty, using the same outbound transit, surface operations, and return stages as the full simulation. The astronaut tutor is accessed from its map icon, while Flight School contains six optional lessons. **Mission Simulation** opens custom mission setup.
+The first screen begins with two paths and reveals setup only after one is selected. **Education** starts a guided 10-day Moon mission at easy difficulty with the five-step tutorial, an astronaut tutor, and rotating facts. **Decision Simulation** opens the configurable setup for destination, scenario, crew size, duration, difficulty, objective, role/control, and a reproducible seed. The simulation objectives do not include the guided tutorial, which belongs to Education. Additional scenarios cover solar activity, habitat pressure, and greenhouse faults. Both paths use the same decision model; simulation is a deeper educational scenario, not a physically realistic mission model.
 
-Mission Simulation lets learners configure destination, scenario, crew size, full or specialist control, selected specialty, duration, difficulty, objective, base name, and a reproducible seed. The seed is used to replay modeled outcomes for comparison, not to estimate real mission risk.
+Players can choose full crew control or a specialist role. Specialist mode limits the player's activities and facility work to that role; every specialist has role-appropriate actions, and the assistant plans a complementary supporting activity rather than automatically duplicating the player's scheduled task. The astronaut tutor in Education and mission assistant in Decision Simulation provide a chat-only interface with local rules when the optional API is unavailable. The Vercel serverless chat functions use server-side provider settings; visitors never need a provider key. See the Vercel setup and public-use limits in README.
 
-Education includes bilingual science tips and proactive low-resource warnings. The optional astronaut tutor and simulation robot answer questions using the local rule-based guide, or the optional Google Gemini API configured through the server-side settings in `.env.example`; assistants guide decisions but do not change game state on the learner’s behalf. The simulation robot’s name and appearance are customizable and saved on-device.
-
-Both modes include an interactive outbound spacecraft leg before base operations and a return-flight decision after the surface phase. Decisions appear in an animated cockpit-window view with a side console. The four crew roles must reach consensus on each transit route as well as on event responses. Transit choices trade energy and food against fatigue or health. Those resource changes remain part of the mission results. Mission Simulation includes additional thermal-drop and habitat-isolation conditions with scenario-specific emergencies.
+After choosing a path, the event guide lists every event's cause and response options. The in-mission crew council shows four perspectives—commander, power engineer, biologist, and water officer—and a deterministic recommendation based on current resource and readiness thresholds. The player discusses those trade-offs and makes the final choice. This is a team-learning exercise on one device, not online multiplayer or simulated voting. Flight screens additionally show idealized Earth–Moon and Earth–Mars orbital transfer estimates, clearly separated from the accelerated travel animation.
 
 ## 🎮 How to Play
 
 ### Start Screen
-1. Choose **Education** for the preset learning mission or **Mission Simulation** for custom setup.
-2. For simulation, choose **destination, scenario, crew, control mode, specialty, duration, difficulty, objective, and seed**.
-3. Enter a base name and start the mission.
+1. Choose **Education** for the preset learning mission or **Decision Simulation** for custom setup. Use **Back to mission mode selection** any time before launch to switch paths.
+2. Review **How to play** and expand the event list to see each event and available response.
+3. In simulation, choose **destination, scenario, crew, duration, difficulty, objective, control style, and seed**.
+4. Enter a base name and start the mission.
 
 ### Gameplay
-- Each mission day has a fictional **06:00–22:00 activity window** and a fixed **22:00–06:00 crew sleep period**.
-- Schedule multiple activities before bedtime: maintenance (2 h), research (3 h), rest (2 h), or exploration (5 h). Construction takes 3 h; operating a facility takes 1 h.
-- End the work shift to wait until 22:00 if the remaining time cannot fit another activity. Sleeping applies daily life-support use, crew recovery, and mission events before the next day starts.
-- Choose **full crew control** or lead one specialty. In specialist mode, the onboard assistant manages supporting crew work, handles their event votes, and requests approval before a critical end-of-day support plan.
-- Seeded, replayable events may occur; consult the crew-role advice, compare choices, and reach a four-role consensus before responding.
+- A modeled day runs from 06:00 to 22:00. Schedule activities by duration: research (4 h), exploration (6 h), maintenance (3 h), and rest (2 h). Building a facility takes 2 h; changing its operating state takes 1 h.
+- The crew can go to sleep at 20:00 or later. Sleeping resolves daily resource use and readiness, then advances to the next day.
+- Inspect the resource bar and forecast, consult the four role perspectives, and plan activities within the remaining time.
+- After mission setup, the launch scene leads to a spacecraft cabin. Choose a flight profile and simulation speed (1×, 2×, or 4×); the approach and docking animation completes before surface operations begin. The route panel shows ideal Hohmann/two-body transfer time, departure velocity change, and phase angle. Those are theoretical estimates, not flight plans; campaign days and supplies do not advance over the transfer duration.
+- The map follows the modeled mission hour through dawn, daylight, dusk, and night. Sending the crew to sleep plays a closing-eye transition before the next day; events animate in the response screen and on the map.
+- Build or pause facilities while managing credits, cargo, time, and operating costs.
+- Seeded, replayable events may occur; compare their options' requirements, costs, and effects before choosing a response.
+- Open the astronaut tutor or robot station from the base map for proactive advice and chat.
 - **Goal**: Survive your mission length without resources hitting zero
 
 ### Winning
@@ -62,7 +64,7 @@ Both modes include an interactive outbound spacecraft leg before base operations
 
 ## 🏗️ How the Game Engine Works
 
-Every event and expedition is reproducible with the same mission seed and cycle. This makes outcomes comparable rather than unpredictable; the model still contains simplified seeded probabilities and does not represent real operational risk.
+Events, expeditions, and efficient-profile transit disturbances are reproducible with the same mission seed and mission day. This makes outcomes comparable; environmental probabilities remain simplified and are not validated risk estimates. Scheduled activities are applied overnight and directly affect resources and readiness.
 
 ### Crew roles and team decisions
 
@@ -71,15 +73,19 @@ Every event and expedition is reproducible with the same mission seed and cycle.
 - **Biologist**: food production and crew health.
 - **Water officer**: water reserves, recycling, and leaks.
 
-The crew council shows localized resource-based advice. In full-control mode, emergency choices are committed only after all four roles agree; in specialist mode, the player confirms the choice while the assistant coordinates the other roles. This is an on-device team exercise, not online multiplayer. The decision-pattern panel summarizes player activities from the current local mission log, not assistant work.
+The crew council shows localized, threshold-based resource advice from each role and suggests an action from a deterministic rule set. Full-control players make all activity choices. In specialist mode, other crew members receive one assistant-coordinated activity per day while the player is restricted to the selected role; the player still makes consequential event and transit choices. The debrief counts recorded actions and event responses; it does not model hidden player intent or claim to predict behavior. This is an on-device team exercise, not online multiplayer.
 
 ### Resource System
-```
-Energy:  Powers everything. Too much consumption = shutdown.
-Oxygen:  Crew breathing. Needs recycling or generation.
-Water:   Hydration, cooling. Can be recycled.
-Food:    Crew nutrition. Affects morale and health.
-```
+
+Resource stores are displayed in kWh, kg, and L, but the rates below are planning assumptions for the game—not validated habitat specifications:
+
+- **Energy:** 4 kWh per crew member per modeled day, plus active facility and scheduled activity loads. Solar output follows a smooth idealized lunar illumination cycle and inverse-square distance scaling at Mars; scenario values are mean daily output at 1 AU. Reactors provide a steady 25 kWh/day.
+- **Oxygen:** 0.84 kg per crew member per modeled day. Each active life-support unit produces up to 1.8 kg/day and uses 2 kWh; its electrolysis demand removes 1.125 L of water per kg of oxygen produced. Research and exploration add small activity allowances.
+- **Water:** 3.5 L per crew member per day before recovery. An active, powered recycler returns up to 98% of crew water use and 90% of greenhouse irrigation in this simplified loop. A liter is treated as approximately one kilogram for electrolysis accounting.
+- **Food:** 0.62 kg per crew member per day. Each powered greenhouse supplies up to 1 kg/day and uses 1.5 L of water and 4 kWh.
+- Facility outputs are reduced proportionally when available stored and generated energy cannot meet modeled crew, facility, and scheduled-activity demand.
+- **MOXIE:** the game models a small demonstration unit at 0.24 kg oxygen/day and 6 kWh/day, not a full crew-scale oxygen plant.
+- **Crew health, readiness, radiation exposure, events, and mission days** remain training indices or simplified mechanics, not medical or operational predictions. Orbital estimates use ideal two-body/Hohmann assumptions, omit real launch windows and perturbations, and do not drive campaign duration or transit resource use.
 
 ### Facilities
 | Building | Produces | Consumes | Purpose |
@@ -92,21 +98,12 @@ Food:    Crew nutrition. Affects morale and health.
 | Laboratory | Science | 10 energy | Research |
 
 ### Difficulty Modifiers
-- **Easy**: 30% less resource consumption, fewer events
-- **Normal**: Standard difficulty
-- **Hard**: 25% more consumption, 70% event chance, harder events
+- **Easy**: 20% lower modeled crew-supply use, a 15% event chance per day, and lower expedition risk.
+- **Normal**: Baseline modeled use and a 30% event chance per day.
+- **Hard**: 20% higher modeled crew-supply use, a 45% event chance per day, and higher expedition risk.
 
 ### Emergency System
-When an event occurs, you choose your response. Each choice affects resources differently. Example:
-
-```
-SOLAR PANEL MALFUNCTION ⚠️
-A sensor failed on Panel 3. Energy output drops.
-
-Option A: Quick Fix (-20 energy, +1 day)
-Option B: Deep Inspection (-30 energy, -5 oxygen, +2 days, +2 science)
-Option C: Leave it (Energy -30% this cycle)
-```
+When an event occurs, review the bilingual description and compare each available response's resource cost, benefit, and any facility requirement. The start screen's expandable event guide lets learners preview the full event catalog before launching.
 
 ---
 
@@ -130,7 +127,7 @@ Players realize:
 - Short-term fixes may cause long-term problems
 - Different difficulties aren't just harder—they change strategy
 
-The guided mission tutorial walks through forecasting, maintenance, food production, crew recovery, and research. Each step explains the decision, its trade-off, and how to verify its effect in the simulation. In Flight School, periodic lesson facts appear every three completed cycles.
+The guided mission tutorial walks through forecasting, maintenance, food production, crew recovery, and research. Each step explains the decision, its trade-off, and how to verify its effect in the simulation. The astronaut tutor rotates a mission fact each day in Education.
 
 ---
 
@@ -147,7 +144,8 @@ src/
 ├── game/
 │   ├── model.ts         # Simulation engine
 │   ├── buildings.ts     # Facility definitions
-│   ├── events.ts        # 20+ emergency types
+│   ├── events.ts        # Bilingual emergency catalog
+│   ├── teamwork.ts      # Role priorities and deterministic team recommendations
 │   └── scenarios.ts     # Mission conditions
 ├── store/
 │   ├── gameStore.ts     # Zustand state
@@ -181,7 +179,7 @@ npm install
 # Start dev server (localhost:5173)
 npm run dev
 
-# Run tests (should see 32 passing)
+# Run simulation and persistence tests
 npm run test
 
 # Build for production
@@ -247,9 +245,9 @@ Data persists across browser sessions (even after close/reopen).
 ## 🏆 Achievement System
 
 Unlock badges for:
-- ✓ First Shifts (complete 5 operating cycles)
-- ✓ Steady Habitat (keep core supplies above 80 for 3 cycles)
-- ✓ Long Haul (survive 15 operating cycles)
+- ✓ First Shifts (complete 5 mission days)
+- ✓ Steady Habitat (keep core supplies above 80 for 3 mission days)
+- ✓ Long Haul (survive 15 mission days)
 - ✓ Safe Return (complete the selected mission objective)
 - ✓ Field Scout (complete a successful expedition)
 - ✓ Research Pioneer (earn 100 science points)
@@ -305,18 +303,7 @@ Total: 32/32 passing
 ## 🛠️ Customization Guide
 
 ### Change Game Balance
-Edit `src/game/model.ts`:
-```typescript
-const baseConsumption = {
-  energy: 20,
-  oxygen: 15,
-  water: 10,
-  food: 5,
-}
-
-// Easy mode is now 40% less
-const easyModifier = 0.6  // Change from 0.7
-```
+Edit `RESOURCE_RATES` and `getSolarAvailabilityFactor` in `src/game/model.ts`, then update the matching tests, facility descriptions in `src/game/buildings.ts`, and this guide. Keep displayed units consistent with the model assumptions and do not present the educational estimates as mission-ready engineering data.
 
 ### Add New Emergency
 Edit `src/game/events.ts`:

@@ -1,5 +1,6 @@
 import type { ControlMode, CrewRole, Destination, GameState, MissionDifficulty, MissionMode, MissionObjective } from '../game/model'
 import type { ScenarioId } from '../game/scenarios'
+import { CREW_ROSTERS } from '../game/crewRosters'
 
 const SAVE_KEY = 'little-orbit-save-v1'
 const SETUP_KEY = 'little-orbit-setup-v1'
@@ -44,7 +45,7 @@ export function loadMissionSetup(): Partial<MissionSetup> {
     const value = setup as Record<string, unknown>
     return {
       ...(isDestination(value.destination) ? { destination: value.destination } : {}),
-      ...(typeof value.crewSize === 'number' && [2, 3, 4].includes(value.crewSize) ? { crewSize: value.crewSize } : {}),
+      ...(typeof value.crewSize === 'number' && CREW_ROSTERS.some((roster) => roster.crewSize === value.crewSize) ? { crewSize: value.crewSize } : {}),
       ...(typeof value.maxDays === 'number' && [10, 30, 60].includes(value.maxDays) ? { maxDays: value.maxDays } : {}),
       ...(isDifficulty(value.difficulty) ? { difficulty: value.difficulty } : {}),
       ...(isObjective(value.objective) ? { objective: value.objective } : {}),

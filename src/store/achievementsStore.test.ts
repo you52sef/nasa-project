@@ -23,7 +23,7 @@ test('unlocks badges once, retains them, and reports new unlocks', () => {
 
   useAchievementsStore.getState().checkAchievements(mission)
   assert.ok(useAchievementsStore.getState().unlocked['first-shifts'])
-  assert.deepEqual(useAchievementsStore.getState().newUnlocks, ['first-shifts'])
+  assert.deepEqual(useAchievementsStore.getState().newUnlocks, ['first-shifts', 'storm-ready'])
 
   useAchievementsStore.getState().clearNewUnlocks()
   useAchievementsStore.getState().checkAchievements(mission)

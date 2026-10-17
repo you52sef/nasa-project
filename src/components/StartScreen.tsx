@@ -11,6 +11,8 @@ import { getAvailableCrewRoles } from '../game/teamwork'
 import { EVENTS } from '../game/events'
 import { useSound } from '../hooks/useSound'
 import { estimateTransfer } from '../game/flightPhysics'
+import { getAllowedCrewSizes, getCrewRoster, localizeCrewRole } from '../game/crewRosters'
+import { LearningAcademy } from './LearningAcademy'
 
 export function StartScreen() {
   const language = useSettingsStore((state) => state.language)
@@ -45,6 +47,7 @@ export function StartScreen() {
   const [launching, setLaunching] = useState(false)
   const [confirmNewMission, setConfirmNewMission] = useState(false)
   const [modeChosen, setModeChosen] = useState(false)
+  const [academyOpen, setAcademyOpen] = useState(false)
   const [seedCopied, setSeedCopied] = useState(false)
   const launchButtonRef = useRef<HTMLButtonElement>(null)
   const cancelConfirmationRef = useRef<HTMLButtonElement>(null)
@@ -53,6 +56,8 @@ export function StartScreen() {
   const isArabic = language === 'ar'
   const DirectionIcon = isArabic ? ArrowLeft : ArrowRight
   const transferEstimate = estimateTransfer(destination === 'moon' ? 'earth-moon' : 'earth-mars')
+  const allowedCrewSizes = getAllowedCrewSizes(destination, maxDays)
+  const crewRoster = getCrewRoster(destination, maxDays, crewSize)
 
   const chooseMode = (mode: 'education' | 'simulation') => {
     setMissionMode(mode)
@@ -64,6 +69,7 @@ export function StartScreen() {
       setDifficulty('easy')
       setScenario('baseline')
       setObjective('tutorial')
+      setAcademyOpen(true)
     } else if (objective === 'tutorial') {
       setObjective('survival')
     }
@@ -100,6 +106,7 @@ export function StartScreen() {
     } catch (error) {
       setLaunching(false)
       setLoadError(error instanceof Error ? error.message : 'Could not start a new mission.')
+      setAcademyOpen(false)
     }
   }
 
@@ -107,10 +114,12 @@ export function StartScreen() {
     if (launching) return
     if (!baseName.trim()) {
       setLoadError(t.baseNameRequired)
+      setAcademyOpen(false)
       return
     }
     if (savedGame) {
       setConfirmNewMission(true)
+      setAcademyOpen(false)
       return
     }
     beginLaunch()
@@ -124,6 +133,10 @@ export function StartScreen() {
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : 'Could not copy the mission seed.')
     }
+  }
+
+  if (academyOpen) {
+    return <LearningAcademy onClose={() => setAcademyOpen(false)} onLaunch={handleLaunch} />
   }
 
   return (
@@ -346,8 +359,8 @@ export function StartScreen() {
 
           <div className="mb-6">
             <label htmlFor="crew-size" className="mb-2 block text-sm font-bold text-slate-200">{t.crew}</label>
-            <div className="grid grid-cols-3 gap-2">
-              {[2, 3, 4].map((size) => (
+            <div className="grid grid-cols-4 gap-2">
+              {allowedCrewSizes.map((size) => (
                 <button
                   key={size}
                   type="button"
@@ -359,6 +372,16 @@ export function StartScreen() {
                 </button>
               ))}
             </div>
+            {crewRoster ? (
+              <div className="mt-3 rounded-xl border border-cyan-200/10 bg-cyan-100/[0.03] p-3" aria-live="polite">
+                <p className="text-[10px] font-black uppercase tracking-wider text-cyan-100">{crewRoster.label} · {crewRoster.crewSize} {t.crew}</p>
+                <ul className="mt-2 grid gap-1 text-[11px] text-slate-300 sm:grid-cols-2">
+                  {crewRoster.assignments.map((assignment) => (
+                    <li key={assignment.title}>{assignment.count > 1 ? `${assignment.count} × ` : ''}{localizeCrewRole(assignment.title, language)}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </div>
 
           <fieldset className="mb-6">
@@ -417,7 +440,6 @@ export function StartScreen() {
             <section className="mb-7 rounded-xl border border-cyan-200/15 bg-cyan-100/[0.035] p-4">
               <p className="text-sm font-bold text-cyan-100">👩‍🚀 {t.educationSection}</p>
               <p className="mt-2 text-xs leading-6 text-slate-300">{t.educationDescription}</p>
-              <p className="mt-2 text-xs leading-6 text-slate-400">{t.educationAssistantMapHint}</p>
             </section>
           )}
 

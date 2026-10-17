@@ -7,13 +7,13 @@ import { useGameStore } from '../store/gameStore'
 import { useSettingsStore } from '../store/settingsStore'
 import { SCENARIOS } from '../game/scenarios'
 import { EVENTS } from '../game/events'
+import { BASE_MAP_SITES, getFacilityMapPosition, getFacilityNetworkOrigin } from '../game/siteLayout'
 import ar from '../i18n/ar'
 import en from '../i18n/en'
 
 interface Props {
   state: GameState
   onAction: (action: Action) => void
-  onOpenAssistant: () => void
 }
 
 type MapSelection =
@@ -22,18 +22,6 @@ type MapSelection =
   | { kind: 'rover' }
   | { kind: 'crew'; index: number }
   | { kind: 'site' }
-  | { kind: 'assistant' }
-
-const facilitySites = [
-  { x: 280, y: 190 },
-  { x: 405, y: 155 },
-  { x: 525, y: 190 },
-  { x: 625, y: 260 },
-  { x: 620, y: 355 },
-  { x: 405, y: 410 },
-  { x: 270, y: 365 },
-  { x: 210, y: 260 },
-]
 
 const terrainRidges = [
   'M-30 115 C105 40 190 190 325 105 S560 45 800 130',
@@ -53,7 +41,7 @@ const mapStars = [
   { x: 316, y: 459, r: 1 }, { x: 42, y: 382, r: .9 },
 ]
 
-export function BaseView({ state, onAction, onOpenAssistant }: Props) {
+export function BaseView({ state, onAction }: Props) {
   const [selected, setSelected] = useState<MapSelection | null>(null)
   const [systemsOverlay, setSystemsOverlay] = useState(false)
   const [eventCue, setEventCue] = useState<string | null>(null)
@@ -101,23 +89,13 @@ export function BaseView({ state, onAction, onOpenAssistant }: Props) {
     onFocus: () => setSelected(selection),
     onClick: (event: MouseEvent<SVGGElement>) => {
       event.stopPropagation()
-      if (selection.kind === 'assistant') {
-        setSelected(null)
-        onOpenAssistant()
-      } else {
-        setSelected(selection)
-      }
+      setSelected(selection)
     },
     onKeyDown: (event: KeyboardEvent<SVGGElement>) => {
       if (event.key === 'Enter' || event.key === ' ') {
         event.preventDefault()
         event.stopPropagation()
-        if (selection.kind === 'assistant') {
-          setSelected(null)
-          onOpenAssistant()
-        } else {
-          setSelected(selection)
-        }
+        setSelected(selection)
       }
     },
   })
@@ -128,9 +106,9 @@ export function BaseView({ state, onAction, onOpenAssistant }: Props) {
   const mappedFacilities = state.buildings.map((id, index) => ({
     id,
     index,
-    position: facilitySites[index % facilitySites.length],
+    position: getFacilityMapPosition(id, index),
     building: BUILDINGS[id],
-  })).filter((facility) => facility.building)
+  })).filter((facility) => facility.building && facility.id !== 'habitat')
 
   return (
     <section className="glass-panel relative overflow-hidden" aria-label={t.siteMapLabel}>
@@ -211,6 +189,25 @@ export function BaseView({ state, onAction, onOpenAssistant }: Props) {
             {terrainRidges.map((path) => <path key={path} d={path} />)}
           </g>
 
+          <circle
+            cx={BASE_MAP_SITES.habitat.x}
+            cy={BASE_MAP_SITES.habitat.y}
+            r="80"
+            fill="none"
+            stroke="#fbbf24"
+            strokeOpacity=".35"
+            strokeWidth="1.5"
+            strokeDasharray="5 6"
+            pointerEvents="none"
+          />
+          <text x={BASE_MAP_SITES.habitat.x} y={BASE_MAP_SITES.habitat.y - 86} textAnchor="middle" fill="#fde68a" fillOpacity=".9" fontSize="8" fontWeight="700" pointerEvents="none">
+            {t.landingPadSafetyZone}
+          </text>
+          <circle cx={BASE_MAP_SITES.protectedRidge.x} cy={BASE_MAP_SITES.protectedRidge.y} r="49" fill="#38bdf8" fillOpacity=".035" stroke="#7dd3fc" strokeOpacity=".38" strokeDasharray="3 5" pointerEvents="none" />
+          <text x={BASE_MAP_SITES.protectedRidge.x} y={BASE_MAP_SITES.protectedRidge.y - 53} textAnchor="middle" fill="#bae6fd" fillOpacity=".9" fontSize="8" fontWeight="700" pointerEvents="none">
+            {t.protectedRidgeLabel}
+          </text>
+
           <path d="M403 278 C350 266 308 286 263 282 S188 297 140 327 M405 278 C462 265 508 260 559 271 S635 285 689 306 M405 280 C407 329 414 371 400 423" fill="none" stroke="#1b2028" strokeOpacity=".5" strokeWidth="13" strokeLinecap="round" />
           <path d="M403 278 C350 266 308 286 263 282 S188 297 140 327 M405 278 C462 265 508 260 559 271 S635 285 689 306 M405 280 C407 329 414 371 400 423" fill="none" stroke="#d6c8ac" strokeOpacity=".62" strokeWidth="2" strokeDasharray="7 7" />
 
@@ -257,9 +254,10 @@ export function BaseView({ state, onAction, onOpenAssistant }: Props) {
             <g className="map-systems-overlay" pointerEvents="none" aria-hidden="true">
               {mappedFacilities.map(({ id, index, position, building }) => {
                 const offline = offlineBuildings.includes(id)
+                const origin = getFacilityNetworkOrigin(id)
                 return (
                   <g key={`network-${id}-${index}`} className={offline ? 'map-network-link map-network-offline' : 'map-network-link'}>
-                    <path d={`M405 280 Q${(position.x + 405) / 2} ${(position.y + 280) / 2 - 24} ${position.x} ${position.y}`} />
+                    <path d={`M${origin.x} ${origin.y} Q${(position.x + origin.x) / 2} ${(position.y + origin.y) / 2 - 18} ${position.x} ${position.y}`} />
                     <circle cx={position.x} cy={position.y} r="12" />
                     <text x={position.x} y={position.y - 17} textAnchor="middle">{building.name[language]}</text>
                   </g>
@@ -292,15 +290,7 @@ export function BaseView({ state, onAction, onOpenAssistant }: Props) {
             </g>
           )})}
 
-          <g transform="translate(610 188) scale(.82)" filter="url(#shadow)" {...select({ kind: 'assistant' }, 'map-assistant-station')} aria-label={t.mapAssistantLabel}>
-            <circle r="28" fill="#0c1520" fillOpacity=".9" stroke="#a5f3fc" strokeWidth="1.5" />
-            <circle className="map-assistant-pulse" r="34" fill="none" stroke="#67e8f9" strokeWidth="1.2" />
-            <text className="map-assistant-avatar" y="5" textAnchor="middle" fontSize="16">{state.missionMode === 'education' ? '👩‍🚀' : '🤖'}</text>
-            <text y="43" textAnchor="middle" fill="#e0f2fe" fontSize="8" fontWeight="700">{t.mapAssistantLabel}</text>
-            <title>{t.mapAssistantLabel}</title>
-          </g>
-
-          <g transform="translate(405 280)" filter="url(#shadow)" {...select({ kind: 'habitat' }, 'map-habitat')} aria-label={t.habitatLabel}>
+          <g transform={`translate(${BASE_MAP_SITES.habitat.x} ${BASE_MAP_SITES.habitat.y})`} filter="url(#shadow)" {...select({ kind: 'habitat' }, 'map-habitat')} aria-label={t.habitatLabel}>
             {selected?.kind === 'habitat' ? <circle r="58" fill="none" stroke="#facc15" strokeWidth="2" strokeDasharray="4 3" /> : null}
             <circle r="43" fill="#0c1520" fillOpacity=".76" stroke="#7dd3fc" strokeOpacity=".72" strokeWidth="2" />
             <path d="M-29 3q0-22 29-28Q29-19 29 3L22 16H-22Z" fill="#8bdaf2" fillOpacity=".42" stroke="#c6f1ff" strokeWidth="1.5" />
@@ -406,7 +396,7 @@ export function BaseView({ state, onAction, onOpenAssistant }: Props) {
             <MapBadge icon="•" label={t.crewLabel} />
           </div>
           <p className="rounded-lg border border-white/10 bg-slate-950/60 px-3 py-2 text-[10px] font-semibold text-slate-200 backdrop-blur">
-            {state.crewSize} {t.crewCountLabel} · {mappedFacilities.length} {t.facilityCountLabel} · {t.cycleCountLabel} {state.day}
+          {state.crewSize} {t.crewCountLabel} · {mappedFacilities.length + Number(state.buildings.includes('habitat'))} {t.facilityCountLabel} · {t.cycleCountLabel} {state.day}
           </p>
         </div>
       </div>
@@ -418,7 +408,6 @@ export function BaseView({ state, onAction, onOpenAssistant }: Props) {
           onDismiss={() => setSelected(null)}
           onAction={onAction}
           onToggleBuilding={toggleBuilding}
-          onOpenAssistant={onOpenAssistant}
         />
       ) : null}
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/[0.06] bg-slate-950/70 px-4 py-2.5">
@@ -442,7 +431,6 @@ function MapObjectInfo({
   onDismiss,
   onAction,
   onToggleBuilding,
-  onOpenAssistant,
 }: {
   selection: MapSelection
   state: GameState
@@ -450,7 +438,6 @@ function MapObjectInfo({
   onDismiss: () => void
   onAction: (action: Action) => void
   onToggleBuilding: (buildingId: string) => void
-  onOpenAssistant: () => void
 }) {
   const arabic = language === 'ar'
   const t = language === 'ar' ? ar : en
@@ -460,8 +447,7 @@ function MapObjectInfo({
     selection.kind === 'habitat' ? t.habitatModuleLabel
       : selection.kind === 'rover' ? t.surfaceRoverLabel
         : selection.kind === 'crew' ? t.mapCrewMemberLabel.replace('{number}', String(selection.index + 1))
-          : selection.kind === 'assistant' ? t.mapAssistantLabel
-            : t.mapScienceSiteLabel
+          : t.mapScienceSiteLabel
   )
   const description = building?.description[language] ?? (
     selection.kind === 'habitat'
@@ -470,9 +456,7 @@ function MapObjectInfo({
         ? t.roverMapInfo
         : selection.kind === 'crew'
           ? t.crewMapInfo
-          : selection.kind === 'assistant'
-            ? t.mapAssistantDescription
-            : t.siteMapInfo
+          : t.siteMapInfo
   )
   const production = building
     ? Object.entries(building.production)
@@ -487,7 +471,7 @@ function MapObjectInfo({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-[9px] font-bold tracking-[.16em] text-sky-200">{t.selectedObject}</p>
-          <h3 className="mt-1 truncate text-sm font-black text-white">{building?.icon || (selection.kind === 'assistant' ? (state.missionMode === 'education' ? '👩‍🚀' : '🤖') : selection.kind === 'rover' ? '🛰️' : selection.kind === 'crew' ? '🧑‍🚀' : selection.kind === 'site' ? '🔬' : '🏠')} {name}</h3>
+          <h3 className="mt-1 truncate text-sm font-black text-white">{building?.icon || (selection.kind === 'rover' ? '🛰️' : selection.kind === 'crew' ? '🧑‍🚀' : selection.kind === 'site' ? '🔬' : '🏠')} {name}</h3>
         </div>
         <button type="button" onClick={onDismiss} className="rounded-lg p-1 text-slate-400 hover:bg-white/10 hover:text-white" aria-label={t.close}><X size={15} /></button>
       </div>
@@ -504,11 +488,7 @@ function MapObjectInfo({
         </>
       ) : null}
       <div className="mt-3 flex gap-2">
-        {selection.kind === 'assistant' ? (
-          <button type="button" onClick={onOpenAssistant} className="primary-button min-h-9 flex-1 !px-2 !py-2 text-[10px]">
-            {t.openAssistant}
-          </button>
-        ) : building ? (
+        {building ? (
           <button
             type="button"
             onClick={() => onToggleBuilding(building.id)}

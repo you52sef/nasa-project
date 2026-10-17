@@ -47,13 +47,13 @@ export async function downloadMissionReport(state: GameState, language: 'ar' | '
         lessons: 'الدروس المكتملة',
         seed: 'بذرة المحاكاة',
         disclaimer: 'الوحدات الفيزيائية تقديرية تعليمية وليست قياسات هندسية معتمدة.',
-        actions: { research: 'بحث علمي', explore: 'رحلة استكشافية', maintenance: 'صيانة', rest: 'راحة' } satisfies Record<Action, string>,
+        actions: { research: 'بحث علمي', explore: 'رحلة استكشافية', maintenance: 'صيانة', exercise: 'تمرين', rest: 'راحة' } satisfies Record<Action, string>,
         difficulties: { easy: 'سهل', normal: 'متوسط', hard: 'صعب' },
         objectives: { survival: 'البقاء', science: 'العلوم', exploration: 'الاستكشاف', tutorial: 'التدريب التفاعلي' },
         cycle: 'الدورة',
         behavior: 'تحليل سلوك القرارات',
         eventResponses: 'استجابات الأحداث المسجلة',
-        assistantActions: 'أنشطة نسقها المساعد',
+        crewSupportActions: 'أنشطة دعم الطاقم',
         failureCause: 'سبب الإخلاء',
         failurePrevention: 'ما الذي كان يمكن فعله؟',
         transitSource: 'قرار المركبة',
@@ -99,13 +99,13 @@ export async function downloadMissionReport(state: GameState, language: 'ar' | '
         lessons: 'Lessons completed',
         seed: 'Replayable simulation seed',
         disclaimer: 'Physical units are educational estimates, not validated engineering measurements.',
-        actions: { research: 'Research', explore: 'Expedition', maintenance: 'Maintenance', rest: 'Rest' } satisfies Record<Action, string>,
+        actions: { research: 'Research', explore: 'Expedition', maintenance: 'Maintenance', exercise: 'Exercise', rest: 'Rest' } satisfies Record<Action, string>,
         difficulties: { easy: 'Easy', normal: 'Normal', hard: 'Hard' },
         objectives: { survival: 'Survival', science: 'Science', exploration: 'Exploration', tutorial: 'Guided tutorial' },
         cycle: 'Cycle',
         behavior: 'Decision behavior analysis',
         eventResponses: 'Recorded event responses',
-        assistantActions: 'Assistant-managed activities',
+        crewSupportActions: 'Crew support activities',
         failureCause: 'Evacuation cause',
         failurePrevention: 'What could have prevented it?',
         transitSource: 'Flight decision',
@@ -271,14 +271,14 @@ export async function downloadMissionReport(state: GameState, language: 'ar' | '
   y += 68
 
   y = drawSection(labels.behavior, y)
-  for (const action of ['research', 'explore', 'maintenance', 'rest'] as const) {
+  for (const action of ['research', 'explore', 'maintenance', 'exercise', 'rest'] as const) {
     drawText(`${labels.actions[action]}: ${actionCounts[action]}`, startX, y, 18, '#cbd5e1')
     y += 28
   }
   drawText(`${labels.eventResponses}: ${state.eventHistory?.length || 0}`, startX, y, 18, '#94a3b8')
   y += 40
-  if (state.assistantActionHistory?.length) {
-    drawText(`${labels.assistantActions}: ${state.assistantActionHistory.length}`, startX, y, 18, '#94a3b8')
+  if (state.crewSupportActionHistory?.length) {
+    drawText(`${labels.crewSupportActions}: ${state.crewSupportActionHistory.length}`, startX, y, 18, '#94a3b8')
     y += 36
   }
 

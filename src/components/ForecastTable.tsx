@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ArrowDown, ArrowUp, Minus } from 'lucide-react'
-import { ACTIVITY_DURATIONS, canPerformActivity, MISSION_DAY_END, type Action, type GameState, type ResourceName } from '../game/model'
+import { ACTIVITY_DURATIONS, canPerformActivity, getEnergyCapacity, MISSION_DAY_END, type Action, type GameState, type ResourceName } from '../game/model'
 import { formatResourceValue, RESOURCE_META, getForecast } from '../game/resources'
 import { recommendCrewSupportAction } from '../game/teamwork'
 import ar from '../i18n/ar'
@@ -29,12 +29,14 @@ export function ForecastTable({ state, language, onPreview }: { state: GameState
         { id: 'research', label: 'بحث' },
         { id: 'explore', label: 'استكشاف' },
         { id: 'maintenance', label: 'صيانة' },
+        { id: 'exercise', label: 'تمرين' },
         { id: 'rest', label: 'راحة' },
       ]
     : [
         { id: 'research', label: 'Research' },
         { id: 'explore', label: 'Explore' },
         { id: 'maintenance', label: 'Maintenance' },
+        { id: 'exercise', label: 'Exercise' },
         { id: 'rest', label: 'Rest' },
       ]
   return (
@@ -78,7 +80,7 @@ export function ForecastTable({ state, language, onPreview }: { state: GameState
             <div key={key} className="contents">
               <span className="font-medium text-slate-300">{RESOURCE_META[key].icon} {RESOURCE_META[key].label[language]}</span>
               <span className="text-end tabular-nums text-slate-400">{formatResourceValue(key, current, language)}</span>
-              <span className={`text-end tabular-nums font-bold ${future <= (key === 'energy' && state.buildings.includes('battery') ? 150 : 100) * .25 ? 'text-rose-300' : 'text-slate-100'}`}>{formatResourceValue(key, future, language)}</span>
+              <span className={`text-end tabular-nums font-bold ${future <= (key === 'energy' ? getEnergyCapacity(state) : 100) * .25 ? 'text-rose-300' : 'text-slate-100'}`}>{formatResourceValue(key, future, language)}</span>
               <span className={`flex items-center justify-end gap-1 text-[10px] tabular-nums ${delta > 0 ? 'text-emerald-300' : delta < 0 ? 'text-rose-300' : 'text-slate-600'}`}>
                 <Icon size={12} />
                 {delta > 0 ? '+' : ''}{formatResourceValue(key, delta, language)}

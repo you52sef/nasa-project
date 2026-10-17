@@ -30,9 +30,9 @@ This makes kids **experience** engineering in their guts, not just understand it
 
 ## 🎮 Two Parts: Learn and Simulate
 
-The first screen begins with two paths and reveals setup only after one is selected. **Education** starts a guided 10-day Moon mission at easy difficulty with the five-step tutorial, an astronaut tutor, and rotating facts. **Decision Simulation** opens the configurable setup for destination, scenario, crew size, duration, difficulty, objective, role/control, and a reproducible seed. The simulation objectives do not include the guided tutorial, which belongs to Education. Additional scenarios cover solar activity, habitat pressure, and greenhouse faults. Both paths use the same decision model; simulation is a deeper educational scenario, not a physically realistic mission model.
+The first screen begins with two paths and reveals setup only after one is selected. **Education** opens the cumulative Learning Hub and a guided 10-day Moon mission at easy difficulty. **Decision Simulation** opens the configurable setup for destination, scenario, crew size, duration, difficulty, objective, role/control, and a reproducible seed. The simulation objectives do not include the guided tutorial, which belongs to Education. Additional scenarios cover solar activity, habitat pressure, and greenhouse faults. Both paths use deterministic, on-device rules; the project has no third-party AI integration or external AI API.
 
-Players can choose full crew control or a specialist role. Specialist mode limits the player's activities and facility work to that role; every specialist has role-appropriate actions, and the assistant plans a complementary supporting activity rather than automatically duplicating the player's scheduled task. The astronaut tutor in Education and mission assistant in Decision Simulation provide a chat-only interface with local rules when the optional API is unavailable. The Vercel serverless chat functions use server-side provider settings; visitors never need a provider key. See the Vercel setup and public-use limits in README.
+Players can choose full crew control or a specialist role. Specialist mode limits the player's activities and facility work to that role; every specialist has role-appropriate actions, and deterministic crew-support rules select a complementary activity rather than automatically duplicating the player's scheduled task.
 
 After choosing a path, the event guide lists every event's cause and response options. The in-mission crew council shows four perspectives—commander, power engineer, biologist, and water officer—and a deterministic recommendation based on current resource and readiness thresholds. The player discusses those trade-offs and makes the final choice. This is a team-learning exercise on one device, not online multiplayer or simulated voting. Flight screens additionally show idealized Earth–Moon and Earth–Mars orbital transfer estimates, clearly separated from the accelerated travel animation.
 
@@ -45,14 +45,14 @@ After choosing a path, the event guide lists every event's cause and response op
 4. Enter a base name and start the mission.
 
 ### Gameplay
-- A modeled day runs from 06:00 to 22:00. Schedule activities by duration: research (4 h), exploration (6 h), maintenance (3 h), and rest (2 h). Building a facility takes 2 h; changing its operating state takes 1 h.
-- The crew can go to sleep at 20:00 or later. Sleeping resolves daily resource use and readiness, then advances to the next day.
+- A modeled day runs from 06:00 to 22:00. Schedule activities by duration: research (4 h), exploration (6 h), maintenance (3 h), exercise (2.5 h), and one rest block (2 h). Reserve time for daily exercise and at least one work activity (research, exploration, or maintenance); waiting for bedtime and sleeping are unavailable until both are scheduled. Building a facility takes 2 h; changing its operating state takes 1 h.
+- The crew can go to sleep at 20:00 or later after completing the daily exercise and work requirements. Sleeping resolves daily resource use and readiness, then advances to the next day. Mission state auto-saves after gameplay decisions; Academy course progress is stored separately in browser storage.
 - Inspect the resource bar and forecast, consult the four role perspectives, and plan activities within the remaining time.
 - After mission setup, the launch scene leads to a spacecraft cabin. Choose a flight profile and simulation speed (1×, 2×, or 4×); the approach and docking animation completes before surface operations begin. The route panel shows ideal Hohmann/two-body transfer time, departure velocity change, and phase angle. Those are theoretical estimates, not flight plans; campaign days and supplies do not advance over the transfer duration.
 - The map follows the modeled mission hour through dawn, daylight, dusk, and night. Sending the crew to sleep plays a closing-eye transition before the next day; events animate in the response screen and on the map.
 - Build or pause facilities while managing credits, cargo, time, and operating costs.
 - Seeded, replayable events may occur; compare their options' requirements, costs, and effects before choosing a response.
-- Open the astronaut tutor or robot station from the base map for proactive advice and chat.
+- Review deterministic crew-council recommendations and Academy lesson prompts.
 - **Goal**: Survive your mission length without resources hitting zero
 
 ### Winning
@@ -73,29 +73,38 @@ Events, expeditions, and efficient-profile transit disturbances are reproducible
 - **Biologist**: food production and crew health.
 - **Water officer**: water reserves, recycling, and leaks.
 
-The crew council shows localized, threshold-based resource advice from each role and suggests an action from a deterministic rule set. Full-control players make all activity choices. In specialist mode, other crew members receive one assistant-coordinated activity per day while the player is restricted to the selected role; the player still makes consequential event and transit choices. The debrief counts recorded actions and event responses; it does not model hidden player intent or claim to predict behavior. This is an on-device team exercise, not online multiplayer.
+The crew council shows localized, threshold-based resource advice from each role and suggests an action from a deterministic rule set. Full-control players make all activity choices. In specialist mode, other crew members receive one rule-selected support activity per day while the player is restricted to the selected role; the player still makes consequential event and transit choices. The debrief counts recorded actions and event responses; it does not model hidden player intent or claim to predict behavior. This is an on-device team exercise, not online multiplayer.
 
 ### Resource System
 
-Resource stores are displayed in kWh, kg, and L, but the rates below are planning assumptions for the game—not validated habitat specifications:
+Resource stores are displayed in kWh, kg, and L. These are educational game parameters, not validated habitat or NASA life-support specifications:
 
-- **Energy:** 4 kWh per crew member per modeled day, plus active facility and scheduled activity loads. Solar output follows a smooth idealized lunar illumination cycle and inverse-square distance scaling at Mars; scenario values are mean daily output at 1 AU. Reactors provide a steady 25 kWh/day.
-- **Oxygen:** 0.84 kg per crew member per modeled day. Each active life-support unit produces up to 1.8 kg/day and uses 2 kWh; its electrolysis demand removes 1.125 L of water per kg of oxygen produced. Research and exploration add small activity allowances.
-- **Water:** 3.5 L per crew member per day before recovery. An active, powered recycler returns up to 98% of crew water use and 90% of greenhouse irrigation in this simplified loop. A liter is treated as approximately one kilogram for electrolysis accounting.
-- **Food:** 0.62 kg per crew member per day. Each powered greenhouse supplies up to 1 kg/day and uses 1.5 L of water and 4 kWh.
+- **Energy:** The model applies a 0.025-hour (90-second) energy equivalent to rated facility power and crew/activity energy per modeled day. This game-only cycle/reserve scaling preserves the stated nameplate values while keeping long campaigns playable; it is not a 24-hour engineering load calculation. Solar is modeled at 15 kW on the Moon and 7 kW on Mars; lunar night has approximately 14 days of zero solar output. The reactor contributes a constant 25 kW. The 200 kWh battery's nameplate reference supports a 27 kW survival load for about 7.4 real hours; that physical runtime is not equivalent to the game's day-cycle accounting.
+- **Oxygen:** 0.84 kg per crew member per modeled day. Each active life-support unit produces up to 1.8 kg/day and uses 2 kWh; electrolysis removes 1.125 L of water per kg of oxygen produced. An oxygen store at zero starts a six-game-hour emergency countdown.
+- **Water:** 3.8 L per crew member per day. Recovery depends on difficulty: 98% Easy, 94% Normal (the game's Medium-equivalent), and 90% Hard. The educational ECLSS model tracks 1.0 kg CO₂ per crew member per day and Sabatier reaction stoichiometry (up to 0.818 L recovered water per kg of processed CO₂); total recovery is capped at the configured recycler rate.
+- **Food:** 2.39 kg per crew member per day, including packaging. Each powered greenhouse growth cycle consumes 1.5 L water and produces 20 kg food plus 3 kg oxygen after ISRU pretreatment removes perchlorates from regolith. Pretreatment costs 2 kWh. The cabin-pressure dashboard uses illustrative 101.3 kPa nominal and 75 kPa leak estimates, not sensor readings.
+- **Crew routine:** 1.5 h preparation/briefing, 2.5 h exercise, two 3.5 h shifts, 1 h lunch/rest, 1 h health check, 2.5 h dinner/personal/family communication, 0.5 h emergency buffer, and 8 h sleep. Mars adds 39 minutes to personal time for a 24 h 39 min sol.
 - Facility outputs are reduced proportionally when available stored and generated energy cannot meet modeled crew, facility, and scheduled-activity demand.
 - **MOXIE:** the game models a small demonstration unit at 0.24 kg oxygen/day and 6 kWh/day, not a full crew-scale oxygen plant.
-- **Crew health, readiness, radiation exposure, events, and mission days** remain training indices or simplified mechanics, not medical or operational predictions. Orbital estimates use ideal two-body/Hohmann assumptions, omit real launch windows and perturbations, and do not drive campaign duration or transit resource use.
+- **Radiation and hazards:** The model uses 1.84 mSv/day in transit and 0.64 mSv/day on Mars surface; shelter shielding and a 600 mSv warning are simplified game mechanics, not dosimetry or a universal/current NASA career exposure limit. Mars dust storms reduce solar output by 80–95% for 3–5 days. Lunar night is modeled at -173°C. Regolith dust mitigation requires a suitport plus an online EDS.
+- **Crew health, readiness, radiation exposure, events, and mission days** remain training mechanics, not medical or operational predictions. Orbital estimates use ideal two-body/Hohmann assumptions, omit real launch windows and perturbations, and do not drive campaign duration or transit resource use.
+
+Construction dependency phases gate expansion: Phase 1 (landing pad, solar, battery, habitat, airlock, shelter), Phase 2 (command, storage, communications), Phase 3 (workshop, lab, clinic, ISRU), and Phase 4 (reactor, greenhouse, expansions). Survival Mode pauses productive facilities and holds critical loads at 27 kW: habitat 15 kW, command 6 kW, communications 3 kW, airlock 2 kW, storage 1 kW. Radiation and resource figures are game parameters; consult the project’s model disclosures and NASA references for the limitations of the educational estimates.
+
+Mission setup provides exact roster profiles for Moon short (2/3/4), Moon base (4/6/8), Mars short (4), and Mars long (6/9/12) missions; 10 modeled cycles select a short roster and 30/60 select long. Four optional surface-operation flows—science expedition, maintenance, construction, and rescue—show crew and facility requirements and progress step by step without replacing campaign survival. Only the science expedition's rover, drilling-tool, and mass-spectrometer prerequisites were specified directly; the remaining facility gates and timer values are game assumptions. Construction validates a minimum 100-unit habitat setback. The unified animated telemetry panel displays supplies, power, modeled pressure, and cumulative radiation.
 
 ### Facilities
 | Building | Produces | Consumes | Purpose |
 |----------|----------|----------|---------|
-| Solar Panel | Energy | Sunlight 😄 | Primary power |
-| Oxygen Gen | Oxygen | 5 energy | Breathable air |
-| Water Recycler | Water | 3 energy | Conservation |
-| Hydroponic Farm | Food | 8 energy | Nutrition |
-| Storm Shelter | Protection | 4 energy | Radiation shield |
-| Laboratory | Science | 10 energy | Research |
+| Facility | Modeled output | Rated operating load | Role |
+|----------|----------------|---------------------------|------|
+| Solar panels | 15 kW Moon / 7 kW Mars | Sunlight-dependent | Primary intermittent power |
+| Reactor | 25 kW constant | 2 kWh per modeled cycle | Steady power |
+| Life support | Up to 1.8 kg oxygen/day | 2 kW | Oxygen and CO₂ processing |
+| ISRU | 4 L water and 0.84 kg oxygen/day | 6 kW | Local resource processing |
+| Water recycler | Difficulty-capped recovery | 2 kW | Water conservation |
+| Greenhouse | 20 kg food and 3 kg oxygen per four powered days | 7 kW; 1.5 L water/day | Food and oxygen production; requires treated regolith |
+| Workshop / research lab / medical bay | No passive resource output | 4 / 4 / 3 kW | Maintenance / science / treatment |
 
 ### Difficulty Modifiers
 - **Easy**: 20% lower modeled crew-supply use, a 15% event chance per day, and lower expedition risk.
@@ -127,7 +136,7 @@ Players realize:
 - Short-term fixes may cause long-term problems
 - Different difficulties aren't just harder—they change strategy
 
-The guided mission tutorial walks through forecasting, maintenance, food production, crew recovery, and research. Each step explains the decision, its trade-off, and how to verify its effect in the simulation. The astronaut tutor rotates a mission fact each day in Education.
+The cumulative Academy walks through forecasting, maintenance, food production, crew recovery, research, and emergency responses. Each lesson includes theory, a guided action, and a cumulative simulation; progress, attempts, and weak points are saved locally.
 
 ---
 
@@ -231,8 +240,9 @@ Players can toggle sound with 🔊/🔇 button in top bar.
 
 ## 💾 Persistence
 
-Everything saves to **localStorage**:
+Gameplay, course progress, and preferences save to **localStorage**:
 - **Game progress**: Resume interrupted missions
+- **Academy progress**: Lesson completion, attempts, and weak-point topics
 - **Leaderboard**: Top 5 scores
 - **Achievements**: Unlock badges
 - **Settings**: Language, sound, difficulty preference

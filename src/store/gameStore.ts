@@ -1,10 +1,11 @@
 import { create } from 'zustand'
-import { canSleepAndAdvance, createMissionRunId, migrateLegacyResourceUnits, recordTutorialStep as applyTutorialStep, resetResourceStreakIfNeeded, resolveTransitDecision, scheduleActivity, sleepAndAdvanceDay as applySleepAndAdvance, waitUntilBedtime as advanceToBedtime, type Action, type ControlMode, type CrewRole, type Destination, type GameState, type MissionDifficulty, type MissionMode, type MissionObjective, type TransitChoice, type TutorialStep } from '../game/model'
+import { canSleepAndAdvance, createMissionRunId, migrateLegacyResourceUnits, pretreatRegolith, recordTutorialStep as applyTutorialStep, resetResourceStreakIfNeeded, resolveTransitDecision, scheduleActivity, setEmergencyLevel as applyEmergencyLevel, sleepAndAdvanceDay as applySleepAndAdvance, waitUntilBedtime as advanceToBedtime, type Action, type ControlMode, type CrewRole, type Destination, type EmergencyLevel, type GameState, type MissionDifficulty, type MissionMode, type MissionObjective, type TransitChoice, type TutorialStep } from '../game/model'
 import type { ScenarioId } from '../game/scenarios'
 import {
   buildInState,
   convertLegacyResourceDelta,
   endIfDepleted,
+  getEnergyCapacity,
   initialGameState,
   settleAfterEvent,
   toggleBuildingInState,
@@ -13,6 +14,8 @@ import { canChooseEventOption, chooseEvent, EVENTS } from '../game/events'
 import { getAvailableCrewRoles, recommendCrewSupportAction } from '../game/teamwork'
 import { deleteSave as eraseSave, hasSavedGame, loadGame as readGame, loadMissionSetup, saveGame as writeGame, saveMissionSetup } from '../utils/saveSystem'
 import { useAchievementsStore } from './achievementsStore'
+import { getAllowedCrewSizes } from '../game/crewRosters'
+import { advanceOperation, setOperationSiteDistance, startOperation, type OperationId } from '../game/operations'
 
 type MissionState = GameState & {
   savedGameExists: boolean
@@ -30,6 +33,11 @@ type MissionState = GameState & {
   setDifficulty: (difficulty: MissionDifficulty) => void
   setObjective: (objective: MissionObjective) => void
   setScenario: (scenario: ScenarioId) => void
+  setEmergencyLevel: (level: EmergencyLevel) => void
+  startOperation: (id: OperationId) => void
+  advanceOperation: () => void
+  setOperationSiteDistance: (distance: number) => void
+  pretreatRegolith: () => void
   setMissionSeed: (seed: number) => void
   randomizeMissionSeed: () => void
   markTutorialStep: (step: TutorialStep) => void
@@ -47,8 +55,16 @@ type MissionState = GameState & {
   deleteSave: () => void
 }
 
+const savedMissionSetup = loadMissionSetup()
+const setupDestination = savedMissionSetup.destination || 'moon'
+const setupDays = savedMissionSetup.maxDays || 10
+const setupAllowedCrew = getAllowedCrewSizes(setupDestination, setupDays)
+const setupCrewSize = setupAllowedCrew.includes(savedMissionSetup.crewSize || 0)
+  ? savedMissionSetup.crewSize!
+  : setupAllowedCrew[0]
+
 const startingState: GameState = {
-  ...initialGameState('moon', 2, '', undefined, {
+  ...initialGameState(setupDestination, setupCrewSize, '', undefined, {
     missionMode: 'education',
     controlMode: 'full',
     controlledRole: 'commander',
@@ -58,7 +74,9 @@ const startingState: GameState = {
     scenario: 'baseline',
   }),
   missionMode: 'education',
-  ...loadMissionSetup(),
+  ...savedMissionSetup,
+  destination: setupDestination,
+  crewSize: setupCrewSize,
   started: false,
 }
 
@@ -83,7 +101,8 @@ function applyEventConsequences(state: GameState, eventId: string): GameState {
   if (eventId === 'solar-storm') {
     const shelterOnline = state.buildings.includes('storm-shelter') && !(state.offlineBuildings || []).includes('storm-shelter')
     next.resources.health = Math.max(0, next.resources.health - (shelterOnline ? 2 : 14))
-    next.radiationExposure = Math.min(100, state.radiationExposure + (shelterOnline ? 8 : 24))
+    next.radiationExposure = state.radiationExposure + (shelterOnline ? 8 : 24)
+    if (next.radiationExposure >= 600) next.permanentRadiationDamageWarning = true
     if (shelterOnline) next.lastMessage = 'حماكم ملجأ العواصف من معظم الإشعاع.'
   }
   if (eventId === 'low-light') next.resources.energy = Math.max(0, next.resources.energy - 8)
@@ -98,7 +117,12 @@ export const useGameStore = create<MissionState>((set, get) => ({
   savedGameExists: initialSaveExists,
 
   setDestination: (destination) => {
-    set({ destination })
+    const state = get()
+    const allowed = getAllowedCrewSizes(destination, state.maxDays)
+    set({
+      destination,
+      crewSize: allowed.includes(state.crewSize) ? state.crewSize : allowed[0],
+    })
     persistSetup(get())
   },
   setMissionMode: (missionMode) => {
@@ -115,8 +139,10 @@ export const useGameStore = create<MissionState>((set, get) => ({
     persistSetup(get())
   },
   setCrewSize: (crewSize) => {
+    const state = get()
+    if (!getAllowedCrewSizes(state.destination, state.maxDays).includes(crewSize)) return
     const availableRoles = getAvailableCrewRoles(crewSize)
-    const currentRole = get().controlledRole
+    const currentRole = state.controlledRole
     set({
       crewSize,
       controlledRole: availableRoles.some((role) => role.id === currentRole) ? currentRole : availableRoles[0].id,
@@ -128,7 +154,12 @@ export const useGameStore = create<MissionState>((set, get) => ({
     persistSetup(get())
   },
   setMissionLength: (maxDays) => {
-    set({ maxDays })
+    const state = get()
+    const allowed = getAllowedCrewSizes(state.destination, maxDays)
+    set({
+      maxDays,
+      crewSize: allowed.includes(state.crewSize) ? state.crewSize : allowed[0],
+    })
     persistSetup(get())
   },
   setDifficulty: (difficulty) => {
@@ -142,6 +173,27 @@ export const useGameStore = create<MissionState>((set, get) => ({
   setScenario: (scenario) => {
     set({ scenario })
     persistSetup(get())
+  },
+  setEmergencyLevel: (level) => {
+    const next = applyEmergencyLevel(get(), level)
+    set(next)
+    if (next.started) get().save()
+  },
+  startOperation: (id) => {
+    set(startOperation(get(), id))
+    get().save()
+  },
+  advanceOperation: () => {
+    set(advanceOperation(get()))
+    get().save()
+  },
+  setOperationSiteDistance: (distance) => {
+    set(setOperationSiteDistance(get(), distance))
+    get().save()
+  },
+  pretreatRegolith: () => {
+    set(pretreatRegolith(get()))
+    get().save()
   },
   setMissionSeed: (missionSeed) => {
     set({ missionSeed: Math.max(0, Math.min(0xffff_ffff, Math.floor(missionSeed))) })
@@ -157,6 +209,7 @@ export const useGameStore = create<MissionState>((set, get) => ({
   markTutorialStep: (step) => {
     const next = applyTutorialStep(get(), step)
     set(next)
+    if (next.started) get().save()
     useAchievementsStore.getState().checkAchievements(next)
   },
   pauseAndReturnToMain: () => {
@@ -171,6 +224,7 @@ export const useGameStore = create<MissionState>((set, get) => ({
     eraseSave()
     set(initialGameState(destination, crewSize, baseName, missionSeed, { maxDays, difficulty, objective, scenario, missionMode, controlMode, controlledRole }))
     set({ savedGameExists: false })
+    get().save()
     persistSetup(get())
   },
 
@@ -213,6 +267,7 @@ export const useGameStore = create<MissionState>((set, get) => ({
     const state = get()
     if (state.isGameOver || state.paused || state.activeEvent || !state.started) return
     set(scheduleActivity(state, action))
+    get().save()
   },
 
   sleepAndAdvance: () => {
@@ -224,6 +279,7 @@ export const useGameStore = create<MissionState>((set, get) => ({
     if (next.isGameOver) {
       set(next)
       useAchievementsStore.getState().checkAchievements(next)
+      get().save()
       return
     }
     const eventId = next.daysSurvived < next.maxDays ? chooseEvent(next) : null
@@ -233,18 +289,23 @@ export const useGameStore = create<MissionState>((set, get) => ({
       next.activeEvent = { id: eventId }
       set(next)
       useAchievementsStore.getState().checkAchievements(next)
+      get().save()
       return
     }
     set(next)
     useAchievementsStore.getState().checkAchievements(next)
-    if (next.daysSurvived > 0 && next.daysSurvived % 3 === 0) get().save()
+    get().save()
   },
 
-  waitUntilBedtime: () => set(advanceToBedtime(get())),
+  waitUntilBedtime: () => {
+    set(advanceToBedtime(get()))
+    get().save()
+  },
 
   chooseTransit: (leg, choice) => {
     const next = resolveTransitDecision(get(), leg, choice)
     set(next)
+    get().save()
     if (next.isGameOver) useAchievementsStore.getState().checkAchievements(next)
   },
 
@@ -259,8 +320,8 @@ export const useGameStore = create<MissionState>((set, get) => ({
     const resources = { ...state.resources }
     for (const [key, delta] of Object.entries(choice.effects)) {
       const resource = key as keyof typeof resources
-      const cap = resource === 'energy' && state.buildings.includes('battery') && !(state.offlineBuildings || []).includes('battery')
-        ? 150
+      const cap = resource === 'energy'
+        ? getEnergyCapacity(state)
         : resource === 'credits' || resource === 'cargo'
           ? Number.MAX_SAFE_INTEGER
           : 100
@@ -276,23 +337,25 @@ export const useGameStore = create<MissionState>((set, get) => ({
       activeEvent: null,
     }
     const streakChecked = resetResourceStreakIfNeeded(withChoice)
-    const depletedResource = (['energy', 'oxygen', 'water', 'food', 'health'] as const).find((resource) => resources[resource] <= 0)
+    const depletedResource = (['energy', 'health'] as const).find((resource) => resources[resource] <= 0)
     const failureCause = depletedResource
       ? { resource: depletedResource, source: 'event' as const, eventId: active.id, choiceIndex }
       : undefined
     const next = endIfDepleted(settleAfterEvent(streakChecked, failureCause), failureCause)
     set(next)
     useAchievementsStore.getState().checkAchievements(next)
-    if (!next.isGameOver && next.daysSurvived > 0 && next.daysSurvived % 3 === 0) get().save()
+    get().save()
   },
 
   buildBuilding: (buildingId) => {
     const next = buildInState(get(), buildingId)
     set(next)
+    get().save()
     useAchievementsStore.getState().checkAchievements(next)
   },
   toggleBuilding: (buildingId) => {
     set(toggleBuildingInState(get(), buildingId))
+    get().save()
   },
 
   completeLesson: (id) => {
@@ -316,6 +379,13 @@ export const useGameStore = create<MissionState>((set, get) => ({
     const saved = readGame()
     if (!saved) return
     const savedState = saved.state
+    const legacyCrewSupportHistory = 'assistantActionHistory' in savedState && Array.isArray(savedState.assistantActionHistory)
+      ? savedState.assistantActionHistory.filter((action): action is Action =>
+        action === 'research' || action === 'explore' || action === 'maintenance' || action === 'exercise' || action === 'rest')
+      : []
+    const { assistantActionHistory: _legacyActionHistory, ...savedGameState } = savedState as GameState & {
+      assistantActionHistory?: unknown
+    }
     const isLegacySave = !savedState.configVersion
     const savedVersion = savedState.configVersion || 0
     const crewSize = savedState.crewSize || startingState.crewSize
@@ -325,11 +395,11 @@ export const useGameStore = create<MissionState>((set, get) => ({
       : availableRoles[0].id
     set({
       ...startingState,
-      ...savedState,
+      ...savedGameState,
       resources: savedVersion < 4
         ? migrateLegacyResourceUnits(savedState.resources)
         : savedState.resources,
-      configVersion: 4,
+      configVersion: 7,
       paused: false,
       maxDays: isLegacySave ? Math.max(savedState.maxDays || startingState.maxDays, 30) : savedState.maxDays || startingState.maxDays,
       difficulty: savedState.difficulty || 'normal',
@@ -358,12 +428,23 @@ export const useGameStore = create<MissionState>((set, get) => ({
       fatigue: savedState.fatigue ?? startingState.fatigue,
       morale: savedState.morale ?? startingState.morale,
       radiationExposure: savedState.radiationExposure ?? 0,
+      permanentRadiationDamageWarning: savedState.permanentRadiationDamageWarning ??
+        (savedState.radiationExposure ?? 0) >= 600,
+      activeOperation: savedState.activeOperation ?? null,
+      regolithPreTreated: savedState.regolithPreTreated ?? false,
+      oxygenEmergencyHoursRemaining: savedState.oxygenEmergencyHoursRemaining ?? null,
+      survivalMode: savedState.survivalMode ?? false,
+      survivalModeOfflineBuildings: savedState.survivalModeOfflineBuildings ?? [],
+      autoShedBuildings: savedState.autoShedBuildings ?? [],
+      emergencyLevel: savedState.emergencyLevel ?? 0,
+      dustStormDaysRemaining: savedState.dustStormDaysRemaining ?? 0,
+      dustStormSolarLossFraction: savedState.dustStormSolarLossFraction ?? 0,
       missionSeed: savedState.missionSeed ?? Math.floor(Math.random() * 0x1_0000_0000),
       offlineBuildings: savedState.offlineBuildings ?? [],
       started: true,
       activeEvent: savedState.activeEvent ?? null,
       actionHistory: savedState.actionHistory ?? [],
-      assistantActionHistory: savedState.assistantActionHistory ?? [],
+      crewSupportActionHistory: savedState.crewSupportActionHistory ?? legacyCrewSupportHistory,
       eventHistory: savedState.eventHistory ?? [],
       failureCause: savedState.failureCause ?? null,
       savedGameExists: true,

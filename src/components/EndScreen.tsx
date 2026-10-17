@@ -34,7 +34,7 @@ export function EndScreen({ state }: { state: GameState }) {
   const objectiveComplete = isObjectiveComplete(state)
   const actionCounts = analyzeMissionBehavior(state.actionHistory || [])
   const actionHistory = state.actionHistory || []
-  const leadingAction = (['research', 'explore', 'maintenance', 'rest'] as const)
+  const leadingAction = (['research', 'explore', 'maintenance', 'exercise', 'rest'] as const)
     .reduce((leading, action) => actionCounts[action] > actionCounts[leading] ? action : leading, 'research')
   const eventChoiceCounts = (state.eventHistory || []).reduce(([first, alternate], response) => (
     response.choiceIndex === 0 ? [first + 1, alternate] : [first, alternate + 1]
@@ -113,7 +113,8 @@ export function EndScreen({ state }: { state: GameState }) {
             <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
               <Stat label={t.fatigue} value={`${Math.round(state.fatigue)}%`} icon="🪫" />
               <Stat label={t.morale} value={`${Math.round(state.morale)}%`} icon="🧑‍🚀" />
-              <Stat label={t.radiationExposure} value={`${Math.round(state.radiationExposure)}/100`} icon="☢️" />
+              <Stat label={t.radiationExposure} value={`${state.radiationExposure.toFixed(1)} mSv / 600`} icon="☢️" />
+              <Stat label={isArabic ? 'تحذير حد الإشعاع المهني' : 'Career radiation limit warning'} value={state.permanentRadiationDamageWarning ? (isArabic ? 'مفعّل' : 'Triggered') : (isArabic ? 'لا' : 'No')} icon="⚠️" />
               <Stat label={t.rescues} value={state.totalRescues} icon="🛡️" />
               <Stat label={t.lessonsProgress} value={`${state.lessonsCompleted.length}/6`} icon="📚" />
             </div>
@@ -148,7 +149,7 @@ export function EndScreen({ state }: { state: GameState }) {
             <h2 className="text-sm font-black text-cyan-50">{t.behaviorTitle}</h2>
             <p className="mt-1 text-xs leading-5 text-slate-500">{t.behaviorDescription}</p>
             <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {(['research', 'explore', 'maintenance', 'rest'] as const).map((action) => (
+              {(['research', 'explore', 'maintenance', 'exercise', 'rest'] as const).map((action) => (
                 <p key={action} className="rounded-lg bg-slate-950/40 p-2 text-xs text-slate-400">
                   {t[`action_${action}`]} <b className="float-end text-white">{actionCounts[action]}</b>
                 </p>
@@ -163,7 +164,7 @@ export function EndScreen({ state }: { state: GameState }) {
               <span>{t.behaviorEvents}: {state.eventHistory?.length || 0}</span>
               <span>{t.eventChoiceFirst}: {eventChoiceCounts[0]}</span>
               <span>{t.eventChoiceSecond}: {eventChoiceCounts[1]}</span>
-              {state.assistantActionHistory?.length ? <span>{t.behaviorAssistantActions}: {state.assistantActionHistory.length}</span> : null}
+              {state.crewSupportActionHistory?.length ? <span>{t.behaviorCrewSupportActions}: {state.crewSupportActionHistory.length}</span> : null}
             </div>
           </section>
           <Leaderboard state={state} language={language} />

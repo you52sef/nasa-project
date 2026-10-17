@@ -1,6 +1,6 @@
 import type { Action, CrewRole, GameState } from './model'
 import type { EventDefinition } from './events'
-import { canPerformActivity, getExplorationRisk } from './model'
+import { canPerformActivity, getEnergyCapacity, getExplorationRisk } from './model'
 import { canChooseEventOption } from './events'
 
 export const CREW_ROLES: readonly {
@@ -54,7 +54,7 @@ export function recommendSpecialistActivity(state: GameState): Action {
       break
   }
   if (canPerformActivity(state, preferred)) return preferred
-  return (['maintenance', 'research', 'explore', 'rest'] as const)
+  return (['maintenance', 'research', 'explore', 'exercise', 'rest'] as const)
     .find((action) => canPerformActivity(state, action)) || 'rest'
 }
 
@@ -89,9 +89,8 @@ function eventResponseScore(state: GameState, event: EventDefinition, index: num
   const score = Object.entries(choice.effects).reduce((total, [resource, effect]) => {
     const key = resource as keyof typeof importance
     const current = state.resources[key]
-    const cap = key === 'energy' && state.buildings.includes('battery') &&
-      !(state.offlineBuildings || []).includes('battery')
-      ? 150
+    const cap = key === 'energy'
+      ? getEnergyCapacity(state)
       : key === 'credits'
         ? Number.MAX_SAFE_INTEGER
         : 100

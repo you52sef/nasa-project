@@ -1,8 +1,25 @@
-import { BUILDINGS } from './buildings'
+import { BUILDING_PHASES, BUILDINGS } from './buildings'
+import { estimateTransfer } from './flightPhysics'
+import {
+  CO2_PER_CREW_DAY,
+  ENVIRONMENT,
+  FOOD_PER_CREW_DAY,
+  OXYGEN_PER_CREW_DAY,
+  POWER_SYSTEM,
+  WATER_PER_CREW_DAY,
+  WATER_RECYCLE_RATE,
+  getCrewDailyRoutine,
+  getCrewSolDurationHours,
+  getSurvivalBatteryRuntimeHours,
+  GREENHOUSE_CYCLE,
+  HABITAT_PRESSURE_KPA,
+} from './constants'
 import { SCENARIOS, type ScenarioId } from './scenarios'
+import type { ActiveOperation } from './operations'
+import { advanceOperationCycle } from './operations'
 
 export type Destination = 'moon' | 'mars'
-export type Action = 'research' | 'explore' | 'maintenance' | 'rest'
+export type Action = 'research' | 'explore' | 'maintenance' | 'exercise' | 'rest'
 export type ResourceName = 'energy' | 'oxygen' | 'water' | 'food' | 'health'
 export type MissionDifficulty = 'easy' | 'normal' | 'hard'
 export type MissionObjective = 'survival' | 'science' | 'exploration' | 'tutorial'
@@ -12,6 +29,7 @@ export type ControlMode = 'full' | 'specialist'
 export type MissionPhase = 'outbound' | 'surface' | 'return'
 export type TransitChoice = 'conservative' | 'efficient'
 export type TutorialStep = 'forecast' | 'maintenance' | 'greenhouse' | 'rest' | 'research'
+export type EmergencyLevel = 0 | 1 | 2 | 3 | 4
 export const TUTORIAL_STEPS: readonly TutorialStep[] = ['forecast', 'maintenance', 'greenhouse', 'rest', 'research']
 
 export interface MissionConfig {
@@ -22,6 +40,35 @@ export interface MissionConfig {
   missionMode?: MissionMode
   controlMode?: ControlMode
   controlledRole?: CrewRole
+}
+
+export function getHabitatPressureKpa(state: Pick<GameState, 'buildings' | 'offlineBuildings' | 'ongoingLeak'>): number {
+  const habitatOnline = state.buildings.includes('habitat') &&
+    !(state.offlineBuildings || []).includes('habitat')
+  if (!habitatOnline) return 0
+  return state.ongoingLeak ? HABITAT_PRESSURE_KPA.leakEstimate : HABITAT_PRESSURE_KPA.nominal
+}
+
+export function pretreatRegolith(state: GameState): GameState {
+  if (state.regolithPreTreated) return state
+  if (!state.started || state.paused || state.isGameOver || state.missionPhase !== 'surface') {
+    return { ...state, lastMessage: 'Regolith treatment is available only during active surface operations.' }
+  }
+  if (!state.buildings.includes('isru') || (state.offlineBuildings || []).includes('isru')) {
+    return { ...state, lastMessage: 'An active ISRU plant is required to pretreat perchlorate-bearing regolith.' }
+  }
+  if (state.resources.energy < GREENHOUSE_CYCLE.regolithTreatmentEnergyKwh) {
+    return { ...state, lastMessage: 'Insufficient energy to pretreat regolith.' }
+  }
+  return {
+    ...state,
+    regolithPreTreated: true,
+    resources: {
+      ...state.resources,
+      energy: state.resources.energy - GREENHOUSE_CYCLE.regolithTreatmentEnergyKwh,
+    },
+    lastMessage: 'Regolith pretreatment complete; perchlorate-bearing soil is ready for greenhouse use.',
+  }
 }
 
 export interface MissionFailure {
@@ -42,8 +89,11 @@ export const ACTIVITY_DURATIONS: Record<Action, number> = {
   research: 4,
   explore: 6,
   maintenance: 3,
+  exercise: 2.5,
   rest: 2,
 }
+export const DAILY_EXERCISE_HOURS = 2.5
+export const DAILY_REST_LIMIT = 1
 export const DIFFICULTY_MODIFIERS: Record<MissionDifficulty, { consumption: number; eventChance: number; explorationRisk: number }> = {
   easy: { consumption: 0.8, eventChance: 0.15, explorationRisk: -0.05 },
   normal: { consumption: 1, eventChance: 0.3, explorationRisk: 0 },
@@ -51,11 +101,10 @@ export const DIFFICULTY_MODIFIERS: Record<MissionDifficulty, { consumption: numb
 }
 export const RESOURCE_RATES = {
   energyKwhPerCrewDay: 4,
-  oxygenKgPerCrewDay: 0.84,
-  waterLitersPerCrewDay: 3.5,
-  waterRecoveryFraction: 0.98,
-  greenhouseWaterRecoveryFraction: 0.9,
-  foodKgPerCrewDay: 0.62,
+  oxygenKgPerCrewDay: OXYGEN_PER_CREW_DAY,
+  waterLitersPerCrewDay: WATER_PER_CREW_DAY,
+  foodKgPerCrewDay: FOOD_PER_CREW_DAY,
+  co2KgPerCrewDay: CO2_PER_CREW_DAY,
   electrolysisWaterKgPerOxygenKg: 1.125,
   restHealthRecoveryPoints: 2,
 } as const
@@ -98,6 +147,16 @@ export interface GameState {
   fatigue: number
   morale: number
   radiationExposure: number
+  permanentRadiationDamageWarning: boolean
+  activeOperation: ActiveOperation | null
+  regolithPreTreated: boolean
+  oxygenEmergencyHoursRemaining: number | null
+  survivalMode: boolean
+  survivalModeOfflineBuildings: string[]
+  autoShedBuildings: string[]
+  emergencyLevel: EmergencyLevel
+  dustStormDaysRemaining: number
+  dustStormSolarLossFraction: number
   buildings: string[]
   offlineBuildings: string[]
   activeEvent: GameEvent | null
@@ -109,7 +168,7 @@ export interface GameState {
   totalRescues: number
   lastAction: Action | null
   actionHistory: Action[]
-  assistantActionHistory: Action[]
+  crewSupportActionHistory: Action[]
   eventHistory: Array<{ eventId: string; choiceIndex: number; day?: number }>
   failureCause: MissionFailure | null
   log: string[]
@@ -137,8 +196,9 @@ export function getActivityResourceCost(
   difficulty: MissionDifficulty,
 ): Partial<Pick<Resources, 'energy' | 'oxygen'>> {
   const consumption = DIFFICULTY_MODIFIERS[difficulty].consumption
-  if (action === 'research') return { energy: 9 * consumption, oxygen: 0.1 * consumption }
-  if (action === 'explore') return { energy: 12 * consumption, oxygen: 0.4 * consumption }
+  if (action === 'research') return { energy: 9 * consumption * POWER_SYSTEM.energyBudgetHoursPerCycle, oxygen: 0.1 * consumption }
+  if (action === 'explore') return { energy: 12 * consumption * POWER_SYSTEM.energyBudgetHoursPerCycle, oxygen: 0.4 * consumption }
+  if (action === 'exercise') return { energy: 1.5 * consumption * POWER_SYSTEM.energyBudgetHoursPerCycle, oxygen: 0.08 * consumption }
   return {}
 }
 
@@ -161,7 +221,7 @@ export function initialGameState(
   return {
     started: true,
     paused: false,
-    configVersion: 4,
+    configVersion: 7,
     day: 1,
     maxDays: MISSION_DURATIONS.includes(config.maxDays as typeof MISSION_DURATIONS[number]) ? config.maxDays! : 30,
     daysSurvived: 0,
@@ -195,7 +255,17 @@ export function initialGameState(
     fatigue: 18,
     morale: 78,
     radiationExposure: 0,
-    buildings: ['solar-panels', 'life-support'],
+    permanentRadiationDamageWarning: false,
+    activeOperation: null,
+    regolithPreTreated: false,
+    oxygenEmergencyHoursRemaining: null,
+    survivalMode: false,
+    survivalModeOfflineBuildings: [],
+    autoShedBuildings: [],
+    emergencyLevel: 0,
+    dustStormDaysRemaining: 0,
+    dustStormSolarLossFraction: 0,
+    buildings: ['landing-pad', 'solar-panels', 'battery', 'habitat', 'airlock', 'storm-shelter', 'life-support'],
     offlineBuildings: [],
     activeEvent: null,
     ongoingLeak: false,
@@ -206,7 +276,7 @@ export function initialGameState(
     totalRescues: 0,
     lastAction: null,
     actionHistory: [],
-    assistantActionHistory: [],
+    crewSupportActionHistory: [],
     eventHistory: [],
     failureCause: null,
     log: [],
@@ -258,13 +328,174 @@ export function getBuildingTotals(buildings: string[], offlineBuildings: string[
       for (const [resource, amount] of Object.entries(building.production || {})) {
         totals[resource as ResourceName] += amount
       }
-      for (const [resource, amount] of Object.entries(building.consumption || {})) {
-        totals[resource as ResourceName] -= amount
-      }
       return totals
     },
     { energy: 0, oxygen: 0, water: 0, food: 0, health: 0 } as Record<ResourceName, number>,
   )
+}
+
+export function getEnergyCapacity(state: Pick<GameState, 'buildings' | 'offlineBuildings'>): number {
+  return state.buildings.includes('battery') && !(state.offlineBuildings || []).includes('battery')
+    ? POWER_SYSTEM.batteryCapacityKwh
+    : 100
+}
+
+export function getSurvivalPowerLoadKw(): number {
+  return Object.values(POWER_SYSTEM.survivalLoadsKw).reduce((total, load) => total + load, 0)
+}
+
+export function getPowerLoadKw(
+  state: Pick<GameState, 'buildings' | 'survivalMode'> & Partial<Pick<GameState, 'offlineBuildings'>>,
+): number {
+  if (state.survivalMode) return POWER_SYSTEM.survivalLoadKw
+  const offlineBuildings = 'offlineBuildings' in state ? state.offlineBuildings || [] : []
+  return state.buildings
+    .filter((id) => !offlineBuildings.includes(id))
+    .reduce((total, id) => total + (POWER_SYSTEM.operatingLoadsKw[id as keyof typeof POWER_SYSTEM.operatingLoadsKw] || 0), 0)
+}
+
+export function getSolarOutputKw(destination: Destination, scenarioOutput = 18): number {
+  return POWER_SYSTEM.solarOutputKw[destination] * scenarioOutput / 18
+}
+
+export function getSolarGenerationKwh(destination: Destination, scenarioOutput = 18, day = 1, stormLoss = 0): number {
+  return getSolarOutputKw(destination, scenarioOutput) *
+    POWER_SYSTEM.solarHoursPerCycle[destination] *
+    POWER_SYSTEM.energyBudgetHoursPerCycle *
+    getSolarAvailabilityFactor(destination, day) *
+    (1 - stormLoss)
+}
+
+export function hasRegolithDustMitigation(state: Pick<GameState, 'buildings' | 'offlineBuildings'>): boolean {
+  return ['suitport', 'electrostatic-dust-shield'].every((id) =>
+    state.buildings.includes(id) && !(state.offlineBuildings || []).includes(id),
+  )
+}
+
+export function getCrewDailyEclssBalance(
+  crewSize: number,
+  difficulty: MissionDifficulty,
+  hasWaterRecycler: boolean,
+  hasSabatierProcessor = true,
+): {
+  oxygenConsumedKg: number
+  waterConsumedLiters: number
+  foodConsumedKg: number
+  co2ProducedKg: number
+  sabatierWaterRecoveredLiters: number
+  totalWaterRecoveredLiters: number
+} {
+  const crewWaterDemand = crewSize * WATER_PER_CREW_DAY * DIFFICULTY_MODIFIERS[difficulty].consumption
+  const co2ProducedKg = crewSize * CO2_PER_CREW_DAY
+  const sabatierWaterRecoveredLiters = hasSabatierProcessor ? co2ProducedKg * (36 / 44) : 0
+  const targetRecovery = crewWaterDemand * WATER_RECYCLE_RATE[difficulty]
+  const totalWaterRecoveredLiters = hasWaterRecycler
+    ? targetRecovery
+    : Math.min(targetRecovery, sabatierWaterRecoveredLiters)
+  return {
+    oxygenConsumedKg: crewSize * OXYGEN_PER_CREW_DAY * DIFFICULTY_MODIFIERS[difficulty].consumption,
+    waterConsumedLiters: crewWaterDemand,
+    foodConsumedKg: crewSize * FOOD_PER_CREW_DAY * DIFFICULTY_MODIFIERS[difficulty].consumption,
+    co2ProducedKg,
+    sabatierWaterRecoveredLiters,
+    totalWaterRecoveredLiters,
+  }
+}
+
+export function setSurvivalMode(state: GameState, enabled: boolean): GameState {
+  if (enabled === state.survivalMode) return state
+  if (enabled) {
+    const buildingsToPause = POWER_SYSTEM.productiveBuildings.filter((id) =>
+      state.buildings.includes(id) && !(state.offlineBuildings || []).includes(id),
+    )
+    return {
+      ...state,
+      survivalMode: true,
+      survivalModeOfflineBuildings: buildingsToPause,
+      offlineBuildings: [...new Set([...(state.offlineBuildings || []), ...buildingsToPause])],
+    }
+  }
+  const pausedBySurvival = new Set(state.survivalModeOfflineBuildings)
+  return {
+    ...state,
+    survivalMode: false,
+    survivalModeOfflineBuildings: [],
+    offlineBuildings: (state.offlineBuildings || []).filter((id) =>
+      !pausedBySurvival.has(id) || (state.autoShedBuildings || []).includes(id)),
+  }
+}
+
+export function updateAutomaticLoadShed(state: GameState): Pick<GameState, 'offlineBuildings' | 'autoShedBuildings' | 'log'> {
+  if (state.survivalMode) {
+    return {
+      offlineBuildings: state.offlineBuildings,
+      autoShedBuildings: state.autoShedBuildings || [],
+      log: state.log,
+    }
+  }
+  const capacity = getEnergyCapacity(state)
+  const lowSupplies = (['oxygen', 'water', 'food'] as const)
+    .some((resource) => state.resources[resource] <= POWER_SYSTEM.automaticLoadShedEnterResourceAmount)
+  const recoveryReady = state.resources.energy >= capacity * POWER_SYSTEM.automaticLoadShedRecoverEnergyFraction &&
+    (['oxygen', 'water', 'food'] as const)
+      .every((resource) => state.resources[resource] >= POWER_SYSTEM.automaticLoadShedRecoverResourceAmount)
+
+  const currentAutoShedBuildings = state.autoShedBuildings || []
+  if (currentAutoShedBuildings.length > 0) {
+    if (!recoveryReady) {
+      return {
+        offlineBuildings: state.offlineBuildings,
+        autoShedBuildings: currentAutoShedBuildings,
+        log: state.log,
+      }
+    }
+    const autoShed = new Set(currentAutoShedBuildings)
+    return {
+      offlineBuildings: state.offlineBuildings.filter((id) => !autoShed.has(id)),
+      autoShedBuildings: [],
+      log: [...state.log, `Day ${state.day}: automatic load shedding cleared after reserves recovered.`],
+    }
+  }
+
+  const energyCritical = state.resources.energy <= capacity * POWER_SYSTEM.automaticLoadShedEnterEnergyFraction
+  if (!energyCritical && !lowSupplies) {
+    return { offlineBuildings: state.offlineBuildings, autoShedBuildings: [], log: state.log }
+  }
+
+  const offline = new Set(state.offlineBuildings)
+  const autoShedBuildings = POWER_SYSTEM.automaticLoadShedBuildings.filter((id) =>
+    state.buildings.includes(id) && !offline.has(id),
+  )
+  if (autoShedBuildings.length === 0) {
+    return { offlineBuildings: state.offlineBuildings, autoShedBuildings: [], log: state.log }
+  }
+  return {
+    offlineBuildings: [...state.offlineBuildings, ...autoShedBuildings],
+    autoShedBuildings,
+    log: [...state.log, `Day ${state.day}: automatic load shedding paused ${autoShedBuildings.join(', ')}.`],
+  }
+}
+
+export function setEmergencyLevel(state: GameState, level: EmergencyLevel): GameState {
+  if (![0, 1, 2, 3, 4].includes(level)) return state
+  if (level === 4 && !state.buildings.includes('medical-bay')) {
+    return { ...state, emergencyLevel: level, lastMessage: 'Medical emergency declared; construct the medical clinic to provide treatment.' }
+  }
+  const next = {
+    ...state,
+    emergencyLevel: level,
+    lastMessage: level === 1
+      ? 'Level 1: shelter the crew during the solar storm.'
+      : level === 2
+        ? 'Level 2: isolate the leaking section and use pressure suits.'
+        : level === 3
+          ? 'Level 3: switch to backup power and shed productive loads.'
+          : level === 4
+            ? 'Level 4: respond at the medical clinic.'
+            : 'Emergency response cleared.',
+  }
+  if (level === 2) next.ongoingLeak = false
+  return setSurvivalMode(next, level === 3)
 }
 
 function countBuilding(buildings: string[], id: string, offlineBuildings: string[] = []): number {
@@ -274,13 +505,16 @@ function countBuilding(buildings: string[], id: string, offlineBuildings: string
 function dailyBuildingEnergyUse(buildings: string[], offlineBuildings: string[] = []): number {
   return buildings
     .filter((id) => !offlineBuildings.includes(id))
-    .reduce((total, id) => total + (BUILDINGS[id]?.consumption.energy || 0), 0)
+    .reduce((total, id) =>
+      total + (POWER_SYSTEM.operatingLoadsKw[id as keyof typeof POWER_SYSTEM.operatingLoadsKw] || 0) *
+        POWER_SYSTEM.energyBudgetHoursPerCycle,
+    0)
 }
 
 export function getSolarAvailabilityFactor(destination: Destination, day: number): number {
-  if (destination === 'mars') return 1 / 1.523679 ** 2
+  if (destination === 'mars') return 1
   const lunarDay = ((day - 1) % 29.53059) / 29.53059
-  return Math.max(0, Math.cos(2 * Math.PI * lunarDay)) * Math.PI
+  return lunarDay >= 0.25 && lunarDay < 0.75 ? 0 : 1
 }
 
 export function forecastResources(state: GameState, action: Action | readonly Action[] | null = null): Resources {
@@ -296,51 +530,64 @@ export function forecastResources(state: GameState, action: Action | readonly Ac
   const recyclerCount = countBuilding(state.buildings, 'water-recycler', offlineBuildings)
   const greenhouseCount = countBuilding(state.buildings, 'greenhouse', offlineBuildings)
   const crewEnergyUse = RESOURCE_RATES.energyKwhPerCrewDay * state.crewSize *
-    maintenanceFactor * consumptionFactor
+    maintenanceFactor * consumptionFactor * POWER_SYSTEM.energyBudgetHoursPerCycle
   const activityEnergyUse = additionalActions.reduce(
     (total, item) => total + (getActivityResourceCost(item, state.difficulty).energy || 0),
     0,
   )
   const scenario = SCENARIOS[state.scenario || 'baseline']
+  const solarLossFactor = state.dustStormDaysRemaining > 0
+    ? 1 - state.dustStormSolarLossFraction
+    : 1
   const generatedEnergy =
-    solarCount * scenario.solarOutput * getSolarAvailabilityFactor(state.destination, state.day) +
-    countBuilding(state.buildings, 'reactor', offlineBuildings) * 25
-  const requiredEnergy = dailyBuildingEnergyUse(state.buildings, offlineBuildings) +
+    solarCount * getSolarGenerationKwh(state.destination, scenario.solarOutput, state.day, 1 - solarLossFactor) +
+    countBuilding(state.buildings, 'reactor', offlineBuildings) *
+      POWER_SYSTEM.reactorOutputKw * POWER_SYSTEM.energyBudgetHoursPerCycle
+  const requiredEnergy = (state.survivalMode
+    ? POWER_SYSTEM.survivalLoadKw * POWER_SYSTEM.energyBudgetHoursPerCycle
+    : dailyBuildingEnergyUse(state.buildings, offlineBuildings)) +
     crewEnergyUse + activityEnergyUse
   const powerFactor = requiredEnergy === 0
     ? 1
     : Math.min(1, Math.max(0, next.energy + generatedEnergy) / requiredEnergy)
   const lifeSupportOxygen = lifeSupportCount * 1.8 * powerFactor
-  const crewWaterUse = state.crewSize * RESOURCE_RATES.waterLitersPerCrewDay *
-    consumptionFactor * SCENARIOS[state.scenario || 'baseline'].waterUseMultiplier
-  const waterRecovery = recyclerCount ? RESOURCE_RATES.waterRecoveryFraction * powerFactor : 0
-  const greenhouseWaterUse = greenhouseCount * (BUILDINGS.greenhouse.consumption.water || 0)
-  const greenhouseWaterRecovery = recyclerCount
-    ? greenhouseWaterUse * RESOURCE_RATES.greenhouseWaterRecoveryFraction * powerFactor
-    : 0
+  const eclss = getCrewDailyEclssBalance(state.crewSize, state.difficulty, recyclerCount > 0, lifeSupportCount > 0)
+  const crewWaterUse = eclss.waterConsumedLiters * scenario.waterUseMultiplier
+  const waterRecovered = eclss.totalWaterRecoveredLiters * powerFactor * scenario.waterUseMultiplier
   const waterElectrolysisUse = lifeSupportOxygen * RESOURCE_RATES.electrolysisWaterKgPerOxygenKg
-  const oxygenUse = state.crewSize * RESOURCE_RATES.oxygenKgPerCrewDay * consumptionFactor
+  const waterLeakUse = state.ongoingLeak
+    ? convertLegacyResourceDelta('water', 5) * consumptionFactor * scenario.waterUseMultiplier
+    : 0
+  const greenhouseWaterUse = greenhouseCount * GREENHOUSE_CYCLE.waterLitersPerDay
+  const waterBeforeGreenhouse = Math.max(0, next.water + production.water * powerFactor -
+    (crewWaterUse - waterRecovered) - waterElectrolysisUse - waterLeakUse)
+  const greenhouseFactor = state.regolithPreTreated && greenhouseCount > 0
+    ? Math.min(powerFactor, greenhouseWaterUse > 0 ? waterBeforeGreenhouse / greenhouseWaterUse : powerFactor)
+    : 0
+  const greenhouseOxygen = greenhouseCount > 0
+    ? greenhouseCount * (GREENHOUSE_CYCLE.oxygenKg / GREENHOUSE_CYCLE.growthDays) * greenhouseFactor
+    : 0
+  const oxygenUse = eclss.oxygenConsumedKg
 
   next.energy = clamp(
     next.energy + generatedEnergy - requiredEnergy,
-    countBuilding(state.buildings, 'battery', offlineBuildings) ? 150 : 100,
+    getEnergyCapacity(state),
   )
   next.oxygen = clamp(
-    next.oxygen + production.oxygen * powerFactor - oxygenUse -
+    next.oxygen + production.oxygen * powerFactor + greenhouseOxygen - oxygenUse -
       additionalActions.reduce((total, item) => total + (getActivityResourceCost(item, state.difficulty).oxygen || 0), 0),
   )
   next.water = clamp(
-    next.water + production.water + greenhouseWaterRecovery -
-      crewWaterUse * (1 - waterRecovery) -
+    next.water + production.water * powerFactor -
+      (crewWaterUse - waterRecovered) -
       waterElectrolysisUse -
-      (state.ongoingLeak
-        ? convertLegacyResourceDelta('water', 5) * consumptionFactor * scenario.waterUseMultiplier
-        : 0),
+      greenhouseWaterUse * greenhouseFactor -
+      waterLeakUse,
   )
-  next.food = clamp(
-    next.food + production.food * powerFactor -
-      state.crewSize * RESOURCE_RATES.foodKgPerCrewDay * consumptionFactor,
-  )
+  const foodProduction = greenhouseCount > 0
+    ? greenhouseCount * (GREENHOUSE_CYCLE.foodKg / GREENHOUSE_CYCLE.growthDays) * greenhouseFactor
+    : production.food * powerFactor
+  next.food = clamp(next.food + foodProduction - eclss.foodConsumedKg)
   next.health = clamp(
     next.health + production.health +
       actions.filter((item) => item === 'rest').length * RESOURCE_RATES.restHealthRecoveryPoints,
@@ -349,8 +596,9 @@ export function forecastResources(state: GameState, action: Action | readonly Ac
   const expectedExplorationHealthLoss = explorations * 16 * getExplorationRisk(state)
   const fatigueHealthLoss = state.fatigue >= 80 ? 3 : 0
   const projectedRadiation = forecastRadiationExposure(state, actions)
-  const radiationHealthLoss = projectedRadiation >= 60 ? 2 : 0
-  next.health = clamp(next.health - expectedExplorationHealthLoss - fatigueHealthLoss - radiationHealthLoss)
+  const radiationHealthLoss = projectedRadiation >= ENVIRONMENT.careerRadiationLimitMsv ? 2 : 0
+  const resourceShortageHealthLoss = next.water <= 0 || next.food <= 0 ? 10 : 0
+  next.health = clamp(next.health - expectedExplorationHealthLoss - fatigueHealthLoss - radiationHealthLoss - resourceShortageHealthLoss)
   return next
 }
 
@@ -358,18 +606,79 @@ export function forecastRadiationExposure(state: GameState, action: Action | rea
   const shelterOnline =
     state.buildings.includes('storm-shelter') &&
     !(state.offlineBuildings || []).includes('storm-shelter')
-  const ambientExposure = state.destination === 'moon' ? 1.4 : 1.1
-  const actions = normalizeActions(action)
-  const activityExposure = actions.filter((item) => item === 'explore').length * 4
+  const isTransit = state.missionPhase === 'outbound' || state.missionPhase === 'return'
+  const ambientExposure = isTransit
+    ? ENVIRONMENT.transitRadiationMsvPerDay
+    : state.destination === 'mars'
+      ? ENVIRONMENT.marsSurfaceRadiationMsvPerDay
+      : 1.4
+  void action
   const shieldingFactor = shelterOnline ? 0.25 : 1
-  return Math.min(100, state.radiationExposure + (ambientExposure + activityExposure) * shieldingFactor)
+  return state.radiationExposure + ambientExposure * shieldingFactor
+}
+
+function advanceOxygenEmergency(state: GameState, elapsedHours: number): GameState {
+  if (state.resources.oxygen > 0) return { ...state, oxygenEmergencyHoursRemaining: null }
+  const remaining = Math.max(0, (state.oxygenEmergencyHoursRemaining ?? 6) - elapsedHours)
+  if (remaining > 0) return { ...state, oxygenEmergencyHoursRemaining: remaining }
+  const failureCause: MissionFailure = { resource: 'oxygen', source: 'daily-operation' }
+  return {
+    ...state,
+    oxygenEmergencyHoursRemaining: 0,
+    isGameOver: true,
+    missionResult: 'evacuation',
+    failureCause,
+    lastMessage: 'Oxygen is depleted; the six-hour emergency reserve has expired.',
+  }
+}
+
+function updateDustStorm(state: GameState): Pick<GameState, 'dustStormDaysRemaining' | 'dustStormSolarLossFraction'> {
+  if (state.dustStormDaysRemaining > 0) {
+    const remaining = state.dustStormDaysRemaining - 1
+    return {
+      dustStormDaysRemaining: remaining,
+      dustStormSolarLossFraction: remaining > 0 ? state.dustStormSolarLossFraction : 0,
+    }
+  }
+  if (state.destination !== 'mars' || deterministicRoll(state.missionSeed, state.day, 71) >= 0.06) {
+    return { dustStormDaysRemaining: 0, dustStormSolarLossFraction: 0 }
+  }
+  const durationRoll = deterministicRoll(state.missionSeed, state.day, 72)
+  const lossRoll = deterministicRoll(state.missionSeed, state.day, 73)
+  return {
+    dustStormDaysRemaining: 3 + Math.floor(durationRoll * 3),
+    dustStormSolarLossFraction: 0.8 + lossRoll * 0.15,
+  }
+}
+
+export function triggerDustStorm(state: GameState, durationDays: number, solarLossFraction: number): GameState {
+  if (
+    state.destination !== 'mars' ||
+    !Number.isInteger(durationDays) ||
+    durationDays < ENVIRONMENT.marsSolarStormDays.min ||
+    durationDays > ENVIRONMENT.marsSolarStormDays.max ||
+    solarLossFraction < ENVIRONMENT.marsSolarStormLossFraction.min ||
+    solarLossFraction > ENVIRONMENT.marsSolarStormLossFraction.max
+  ) {
+    return { ...state, lastMessage: 'Dust storm parameters are outside the supported Mars hazard range.' }
+  }
+  return { ...state, dustStormDaysRemaining: durationDays, dustStormSolarLossFraction: solarLossFraction }
+}
+
+export function isLunarNight(day: number): boolean {
+  const lunarPhase = ((day - 1) % 29.53059) / 29.53059
+  return lunarPhase >= 0.25 && lunarPhase < 0.75
+}
+
+export function getLunarSurfaceTemperatureCelsius(day: number): number | null {
+  return isLunarNight(day) ? ENVIRONMENT.lunarNightTemperatureCelsius : null
 }
 
 export function finishDay(state: GameState, action: Action | readonly Action[]): GameState {
   if (!state.started || state.paused || state.isGameOver || state.activeEvent || state.daysSurvived >= state.maxDays) return state
   const actions = normalizeActions(action)
   if (!actions.length) actions.push('rest')
-  const depletedBeforeAdvance = (['energy', 'oxygen', 'water', 'food', 'health'] as const)
+  const depletedBeforeAdvance = (['energy', 'health'] as const)
     .find((resource) => state.resources[resource] <= 0)
   if (depletedBeforeAdvance) {
     const failureCause: MissionFailure = {
@@ -393,19 +702,28 @@ export function finishDay(state: GameState, action: Action | readonly Action[]):
     const step = tutorialStep[item]
     return step ? recordTutorialStep(current, step) : current
   }, cycleState)
-  const next = { ...tutorialState }
+  const next = { ...advanceOperationCycle(tutorialState) }
   next.actionHistory = [...state.actionHistory, ...actions]
   next.radiationExposure = forecastRadiationExposure(state, actions)
+  next.permanentRadiationDamageWarning =
+    state.permanentRadiationDamageWarning || next.radiationExposure >= ENVIRONMENT.careerRadiationLimitMsv
+  next.oxygenEmergencyHoursRemaining = next.resources.oxygen <= 0
+    ? state.oxygenEmergencyHoursRemaining ?? 6
+    : null
+  const radiationLimitJustReached = next.permanentRadiationDamageWarning && !state.permanentRadiationDamageWarning
+  Object.assign(next, updateDustStorm(state))
   const fatigueChange: Record<Action, number> = {
     research: 8,
     explore: 20,
     maintenance: 3,
+    exercise: 8,
     rest: -24,
   }
   const moraleChange: Record<Action, number> = {
     research: 1,
     explore: -7,
     maintenance: 3,
+    exercise: 2,
     rest: 8,
   }
   next.fatigue = clampPercent(state.fatigue + actions.reduce((total, item) => total + 4 + fatigueChange[item], 0))
@@ -434,13 +752,17 @@ export function finishDay(state: GameState, action: Action | readonly Action[]):
   } else {
     next.lastMessage = `استعاد الطاقم عافيته؛ الإرهاق ${next.fatigue}٪ والمعنويات ${next.morale}٪.`
   }
+  if (radiationLimitJustReached) {
+    next.lastMessage = 'Warning: cumulative radiation has reached NASA’s 600 mSv career-limit reference.'
+  }
   next.lastAction = lastAction
   next.log = [...state.log, `اليوم ${state.day}: ${actions.join(', ')}`]
   const suppliesAboveThreshold = (['energy', 'oxygen', 'water', 'food'] as const)
     .every((resource) => next.resources[resource] > 80)
   next.resourceStreak = suppliesAboveThreshold ? state.resourceStreak + 1 : 0
+  Object.assign(next, updateAutomaticLoadShed(next))
 
-  const depleted = (['energy', 'oxygen', 'water', 'food', 'health'] as ResourceName[]).find(
+  const depleted = (['energy', 'health'] as const).find(
     (key) => next.resources[key] <= 0,
   )
   if (depleted) {
@@ -484,10 +806,10 @@ function getAdditionalActions(scheduled: readonly Action[], planned: readonly Ac
 }
 
 const SPECIALIST_ACTIONS: Record<CrewRole, readonly Action[]> = {
-  commander: ['explore', 'maintenance', 'rest'],
-  'power-engineer': ['maintenance', 'research', 'rest'],
-  biologist: ['research', 'explore', 'rest'],
-  'water-officer': ['maintenance', 'explore', 'rest'],
+  commander: ['explore', 'maintenance', 'exercise', 'rest'],
+  'power-engineer': ['maintenance', 'research', 'exercise', 'rest'],
+  biologist: ['research', 'explore', 'exercise', 'rest'],
+  'water-officer': ['maintenance', 'explore', 'exercise', 'rest'],
 }
 
 export function canPerformActivity(state: GameState, action: Action): boolean {
@@ -495,15 +817,42 @@ export function canPerformActivity(state: GameState, action: Action): boolean {
   return SPECIALIST_ACTIONS[state.controlledRole].includes(action)
 }
 
+function hasCompletedDailyRequirements(actions: readonly Action[]): boolean {
+  return actions.includes('exercise') &&
+    actions.some((action) => action === 'maintenance' || action === 'research' || action === 'explore')
+}
+
+function preservesDailyRequirements(state: GameState, elapsedHours: number): boolean {
+  if (hasCompletedDailyRequirements(state.todayActions)) return true
+  const exerciseRemaining = state.todayActions.includes('exercise') ? 0 : DAILY_EXERCISE_HOURS
+  const workRemaining = state.todayActions.some((action) =>
+    action === 'maintenance' || action === 'research' || action === 'explore',
+  ) ? 0 : ACTIVITY_DURATIONS.maintenance
+  return state.hour + elapsedHours + exerciseRemaining + workRemaining <= MISSION_DAY_END
+}
+
+export function canScheduleActivity(state: GameState, action: Action): boolean {
+  if (!state.started || state.paused || state.isGameOver || state.activeEvent) return false
+  if (state.missionPhase === 'outbound' && !state.transitDecisions.some((decision) => decision.leg === 'outbound')) return false
+  if (state.missionPhase === 'return' && !state.transitDecisions.some((decision) => decision.leg === 'return')) return false
+  if (!canPerformActivity(state, action) || state.hour + ACTIVITY_DURATIONS[action] > MISSION_DAY_END) return false
+  if (action === 'rest' && state.todayActions.filter((item) => item === 'rest').length >= DAILY_REST_LIMIT) return false
+
+  const actionsAfterSchedule = [...state.todayActions, action]
+  return preservesDailyRequirements({ ...state, todayActions: actionsAfterSchedule }, ACTIVITY_DURATIONS[action])
+}
+
 export function scheduleActivity(state: GameState, action: Action): GameState {
-  if (!state.started || state.paused || state.isGameOver || state.activeEvent) return state
-  if (state.missionPhase === 'outbound' && !state.transitDecisions.some((decision) => decision.leg === 'outbound')) return state
-  if (state.missionPhase === 'return' && !state.transitDecisions.some((decision) => decision.leg === 'return')) return state
-  if (!canPerformActivity(state, action) || state.hour + ACTIVITY_DURATIONS[action] > MISSION_DAY_END) return state
+  if (!canScheduleActivity(state, action)) {
+    const lastMessage = action === 'rest' && state.todayActions.includes('rest')
+      ? 'The daily rest block has already been used.'
+      : 'Reserve time for daily exercise and at least one work activity before scheduling optional activities.'
+    return { ...state, lastMessage }
+  }
   const cost = getActivityResourceCost(action, state.difficulty)
-  const batteryOnline = state.buildings.includes('battery') && !(state.offlineBuildings || []).includes('battery')
+  const energyCapacity = getEnergyCapacity(state)
   const resources = { ...state.resources }
-  if (cost.energy !== undefined) resources.energy = clamp(resources.energy - cost.energy, batteryOnline ? 150 : 100)
+  if (cost.energy !== undefined) resources.energy = clamp(resources.energy - cost.energy, energyCapacity)
   if (cost.oxygen !== undefined) resources.oxygen = clamp(resources.oxygen - cost.oxygen)
   const scheduled = {
     ...state,
@@ -512,35 +861,52 @@ export function scheduleActivity(state: GameState, action: Action): GameState {
     todayActions: [...state.todayActions, action],
     lastMessage: '',
   }
-  return endIfDepleted(scheduled, { resource: (['energy', 'oxygen'] as const).find((resource) => resources[resource] <= 0) || 'energy', source: 'daily-operation', action })
+  const elapsed = advanceOxygenEmergency(scheduled, ACTIVITY_DURATIONS[action])
+  return endIfDepleted(elapsed, { resource: (['energy', 'oxygen'] as const).find((resource) => resources[resource] <= 0) || 'energy', source: 'daily-operation', action })
 }
 
 export function canSleepAndAdvance(state: GameState): boolean {
   const transitReady = (state.missionPhase !== 'outbound' || state.transitDecisions.some((decision) => decision.leg === 'outbound'))
     && (state.missionPhase !== 'return' || state.transitDecisions.some((decision) => decision.leg === 'return'))
   return transitReady && state.daysSurvived < state.maxDays && state.hour >= MISSION_BEDTIME &&
-    !state.activeEvent && !state.isGameOver && state.started && !state.paused
+    !state.activeEvent && !state.isGameOver && state.started && !state.paused &&
+    hasCompletedDailyRequirements(state.todayActions)
+}
+
+export function canWaitUntilBedtime(state: GameState): boolean {
+  const transitReady = (state.missionPhase !== 'outbound' || state.transitDecisions.some((decision) => decision.leg === 'outbound'))
+    && (state.missionPhase !== 'return' || state.transitDecisions.some((decision) => decision.leg === 'return'))
+  return transitReady && !state.paused && !state.isGameOver && !state.activeEvent && state.started &&
+    state.hour < MISSION_BEDTIME && hasCompletedDailyRequirements(state.todayActions)
 }
 
 export function waitUntilBedtime(state: GameState): GameState {
   const transitReady = (state.missionPhase !== 'outbound' || state.transitDecisions.some((decision) => decision.leg === 'outbound'))
     && (state.missionPhase !== 'return' || state.transitDecisions.some((decision) => decision.leg === 'return'))
   if (!transitReady || !state.started || state.paused || state.isGameOver || state.activeEvent || state.hour >= MISSION_BEDTIME) return state
-  return { ...state, hour: MISSION_BEDTIME }
+  if (!hasCompletedDailyRequirements(state.todayActions)) {
+    return { ...state, lastMessage: 'Complete daily exercise and one work activity before advancing to bedtime.' }
+  }
+  return advanceOxygenEmergency(
+    { ...state, hour: MISSION_BEDTIME },
+    MISSION_BEDTIME - state.hour,
+  )
 }
 
 export function sleepAndAdvanceDay(state: GameState, crewCoordinatedAction?: Action): GameState {
   if (!canSleepAndAdvance(state)) return state
   const actions: Action[] = [...state.todayActions, ...(crewCoordinatedAction ? [crewCoordinatedAction] : []), 'rest']
-  const next = finishDay(state, actions)
+  const afterSleep = advanceOxygenEmergency(state, 8)
+  if (afterSleep.isGameOver) return afterSleep
+  const next = finishDay(afterSleep, actions)
   next.actionHistory = [...state.actionHistory, ...state.todayActions]
   next.lastAction = state.todayActions[state.todayActions.length - 1] || crewCoordinatedAction || 'rest'
   if (next.failureCause?.source === 'daily-operation') {
     next.failureCause = { ...next.failureCause, action: next.lastAction }
   }
   if (crewCoordinatedAction) {
-    next.assistantActionHistory = [...state.assistantActionHistory, crewCoordinatedAction]
-    next.log = [...next.log, `Day ${state.day}: assistant-coordinated ${crewCoordinatedAction}`]
+    next.crewSupportActionHistory = [...state.crewSupportActionHistory, crewCoordinatedAction]
+    next.log = [...next.log, `Day ${state.day}: crew support activity ${crewCoordinatedAction}`]
   }
   return next
 }
@@ -557,6 +923,12 @@ export function resolveTransitDecision(
     transitDecisions: [...state.transitDecisions, { leg, choice }],
     missionPhase: leg === 'outbound' ? 'surface' : 'return',
   }
+  const transferRoute = state.destination === 'moon'
+    ? leg === 'outbound' ? 'earth-moon' : 'moon-earth'
+    : leg === 'outbound' ? 'earth-mars' : 'mars-earth'
+  next.radiationExposure += estimateTransfer(transferRoute).durationDays * ENVIRONMENT.transitRadiationMsvPerDay
+  next.permanentRadiationDamageWarning =
+    state.permanentRadiationDamageWarning || next.radiationExposure >= ENVIRONMENT.careerRadiationLimitMsv
   if (choice === 'conservative') {
     next.resources.energy = clamp(next.resources.energy - 8)
     next.fatigue = clampPercent(next.fatigue + 3)
@@ -574,13 +946,16 @@ export function resolveTransitDecision(
     }
   }
   next.log = [...state.log, `اليوم ${state.day}: ${leg} transit (${choice})`]
-  const depleted = (['energy', 'oxygen', 'water', 'food', 'health'] as const)
+  const depleted = (['energy', 'health'] as const)
     .find((resource) => next.resources[resource] <= 0)
   if (!depleted) {
     if (leg === 'return') {
       next.isGameOver = true
       next.missionResult = 'success'
       next.lastMessage = 'اكتملت الرحلة وعاد الطاقم إلى الأرض بسلام.'
+    }
+    if (next.permanentRadiationDamageWarning && !state.permanentRadiationDamageWarning) {
+      next.lastMessage += ' Warning: cumulative radiation has reached the 600 mSv career-limit reference.'
     }
     return next
   }
@@ -632,7 +1007,7 @@ export function resetResourceStreakIfNeeded(state: GameState): GameState {
 }
 
 export function settleAfterEvent(state: GameState, failureCause?: MissionFailure): GameState {
-  const depleted = (['energy', 'oxygen', 'water', 'food', 'health'] as ResourceName[]).find(
+  const depleted = (['energy', 'health'] as const).find(
     (key) => state.resources[key] <= 0,
   )
   if (depleted) {
@@ -645,16 +1020,28 @@ export function settleAfterEvent(state: GameState, failureCause?: MissionFailure
       lastMessage: `انخفض ${depleted} إلى الصفر، واضطر الطاقم إلى الإخلاء.`,
     }
   }
+  if (state.resources.oxygen <= 0 && state.oxygenEmergencyHoursRemaining === null) {
+    state = { ...state, oxygenEmergencyHoursRemaining: 6 }
+  } else if (state.resources.oxygen > 0) {
+    state = { ...state, oxygenEmergencyHoursRemaining: null }
+  }
   if (state.daysSurvived >= state.maxDays) {
     return { ...state, activeEvent: null, isGameOver: true, missionResult: 'success', hour: MISSION_DAY_START, todayActions: [] }
   }
-  return { ...state, activeEvent: null, day: state.day + 1, hour: MISSION_DAY_START, todayActions: [] }
+  const next = { ...state, activeEvent: null, day: state.day + 1, hour: MISSION_DAY_START, todayActions: [] }
+  return { ...next, ...updateAutomaticLoadShed(next) }
 }
 
 export function canBuild(state: GameState, buildingId: string): boolean {
-  if (!canManageMissionActivity(state) || state.hour + 2 > MISSION_DAY_END) return false
+  if (!canManageMissionActivity(state) || state.hour + 2 > MISSION_DAY_END || !preservesDailyRequirements(state, 2)) return false
   const building = BUILDINGS[buildingId]
-  if (!building || (building.destination && building.destination !== state.destination)) return false
+  if (!building || state.buildings.includes(buildingId) || (building.destination && building.destination !== state.destination)) return false
+  if (buildingId === 'greenhouse' && !state.regolithPreTreated) return false
+  const earlierPhases = BUILDING_PHASES.filter((phase) => phase.phase < building.phase)
+  if (earlierPhases.some((phase) => phase.buildings.some((requiredId) => {
+    const required = BUILDINGS[requiredId]
+    return (!required.destination || required.destination === state.destination) && !state.buildings.includes(requiredId)
+  }))) return false
   if (state.controlMode === 'specialist' && !canManageFacility(state.controlledRole, buildingId)) return false
   if (state.resources.credits < building.cost || state.resources.cargo < building.cargo) return false
   if (state.resources.energy < building.energyCost) return false
@@ -662,7 +1049,8 @@ export function canBuild(state: GameState, buildingId: string): boolean {
 }
 
 export function canToggleBuilding(state: GameState, buildingId: string): boolean {
-  if (!canManageMissionActivity(state) || state.hour + 1 > MISSION_DAY_END || !state.buildings.includes(buildingId) || !BUILDINGS[buildingId]) return false
+  if (!canManageMissionActivity(state) || state.hour + 1 > MISSION_DAY_END || !preservesDailyRequirements(state, 1) || !state.buildings.includes(buildingId) || !BUILDINGS[buildingId]) return false
+  if (state.survivalMode && POWER_SYSTEM.productiveBuildings.includes(buildingId as typeof POWER_SYSTEM.productiveBuildings[number])) return false
   if (state.controlMode === 'specialist' && !canManageFacility(state.controlledRole, buildingId)) return false
   const offlineBuildings = state.offlineBuildings || []
   if (!offlineBuildings.includes(buildingId) && buildingId === 'life-support') {
@@ -678,11 +1066,20 @@ export function canToggleBuilding(state: GameState, buildingId: string): boolean
 
 export function toggleBuildingInState(state: GameState, buildingId: string): GameState {
   if (!canToggleBuilding(state, buildingId)) {
+    const lastMessage = state.buildings.includes(buildingId) &&
+      state.hour + 1 <= MISSION_DAY_END &&
+      !preservesDailyRequirements(state, 1)
+      ? 'Reserve time for daily exercise and one work activity before operating facilities.'
+      : state.buildings.includes(buildingId) &&
+        state.survivalMode &&
+        POWER_SYSTEM.productiveBuildings.includes(buildingId as typeof POWER_SYSTEM.productiveBuildings[number])
+        ? 'Productive facilities are offline during Survival Mode.'
+        : state.buildings.includes(buildingId)
+          ? 'Keep at least one oxygen-production system online or check crew authorization.'
+          : 'That facility is not part of this base.'
     return {
       ...state,
-      lastMessage: state.buildings.includes(buildingId)
-        ? 'Keep at least one oxygen-production system online.'
-        : 'That facility is not part of this base.',
+      lastMessage,
     }
   }
   const offlineBuildings = state.offlineBuildings || []
@@ -690,21 +1087,40 @@ export function toggleBuildingInState(state: GameState, buildingId: string): Gam
   const updatedOfflineBuildings = isOffline
     ? offlineBuildings.filter((id) => id !== buildingId)
     : [...offlineBuildings, buildingId]
-  return {
+  const next = {
     ...state,
     hour: state.hour + 1,
     offlineBuildings: updatedOfflineBuildings,
+    autoShedBuildings: isOffline
+      ? (state.autoShedBuildings || []).filter((id) => id !== buildingId)
+      : state.autoShedBuildings,
     lastMessage: `${BUILDINGS[buildingId].name.en} ${isOffline ? 'returned to service' : 'placed offline'} by crew command.`,
   }
+  return advanceOxygenEmergency(next, 1)
 }
 
 export function buildInState(state: GameState, buildingId: string): GameState {
   if (!canBuild(state, buildingId)) {
     const building = BUILDINGS[buildingId]
-    const lastMessage = !canManageMissionActivity(state)
+    const earlierPhases = building
+      ? BUILDING_PHASES.filter((phase) => phase.phase < building.phase)
+      : []
+    const missingDependency = earlierPhases.some((phase) =>
+      phase.buildings.some((requiredId) => {
+        const required = BUILDINGS[requiredId]
+        return (!required.destination || required.destination === state.destination) && !state.buildings.includes(requiredId)
+      }),
+    )
+    const lastMessage = buildingId === 'greenhouse' && !state.regolithPreTreated
+      ? 'Pretreat perchlorate-bearing regolith at an active ISRU plant before building the greenhouse.'
+      : !canManageMissionActivity(state)
       ? 'Facility work is unavailable during this mission phase.'
-      : state.hour + 2 > MISSION_DAY_END
+      : state.hour + 2 > MISSION_DAY_END || !preservesDailyRequirements(state, 2)
         ? 'Not enough shift time remains for construction.'
+        : building && state.buildings.includes(buildingId)
+          ? 'This facility has already been constructed.'
+          : missingDependency
+            ? 'Complete all facilities in earlier construction phases first.'
         : building && state.controlMode === 'specialist' && !canManageFacility(state.controlledRole, buildingId)
           ? 'This facility is outside your selected specialist role.'
           : !building || (building.destination && building.destination !== state.destination)
@@ -723,10 +1139,16 @@ export function buildInState(state: GameState, buildingId: string): GameState {
       energy: state.resources.energy - building.energyCost,
     },
     buildings: [...state.buildings, buildingId],
-    offlineBuildings: state.offlineBuildings || [],
+    offlineBuildings: state.survivalMode && POWER_SYSTEM.productiveBuildings.includes(buildingId as typeof POWER_SYSTEM.productiveBuildings[number])
+      ? [...new Set([...(state.offlineBuildings || []), buildingId])]
+      : state.offlineBuildings || [],
     lastMessage: `تم بناء ${building.name.ar} بنجاح.`,
   }
-  return buildingId === 'greenhouse' ? recordTutorialStep(next, 'greenhouse') : next
+  if (state.survivalMode && POWER_SYSTEM.productiveBuildings.includes(buildingId as typeof POWER_SYSTEM.productiveBuildings[number])) {
+    next.survivalModeOfflineBuildings = [...state.survivalModeOfflineBuildings, buildingId]
+  }
+  const elapsed = advanceOxygenEmergency(next, 2)
+  return buildingId === 'greenhouse' ? recordTutorialStep(elapsed, 'greenhouse') : elapsed
 }
 
 function canManageMissionActivity(state: GameState): boolean {
@@ -743,9 +1165,12 @@ function canManageFacility(role: CrewRole, buildingId: string): boolean {
 }
 
 export function endIfDepleted(state: GameState, failureCause?: MissionFailure): GameState {
-  const depleted = (['energy', 'oxygen', 'water', 'food', 'health'] as ResourceName[]).find(
+  let depleted: ResourceName | undefined = (['energy', 'health'] as const).find(
     (key) => state.resources[key] <= 0,
   )
+  if (!depleted && state.resources.oxygen <= 0 && state.oxygenEmergencyHoursRemaining === 0) {
+    depleted = 'oxygen'
+  }
   return depleted
     ? {
         ...state,
@@ -761,5 +1186,5 @@ export function analyzeMissionBehavior(history: readonly Action[]): Record<Actio
   return history.reduce<Record<Action, number>>((counts, action) => {
     counts[action] += 1
     return counts
-  }, { research: 0, explore: 0, maintenance: 0, rest: 0 })
+  }, { research: 0, explore: 0, maintenance: 0, exercise: 0, rest: 0 })
 }

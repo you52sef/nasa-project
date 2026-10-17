@@ -5,12 +5,24 @@ import type { ScenarioId } from '../game/scenarios'
 type Note = { frequency: number; duration: number; type?: OscillatorType; volume?: number; endFrequency?: number }
 
 let sharedContext: AudioContext | null = null
+let ambientOscillators: OscillatorNode[] = []
+let ambientGain: GainNode | null = null
+let suitBreathingSource: AudioBufferSourceNode | null = null
+let suitBreathingGain: GainNode | null = null
+let suitBreathingFilter: BiquadFilterNode | null = null
+let suitBreathingTimer: number | null = null
+
+function resumeAudio(context: AudioContext): void {
+  if (context.state === 'suspended') {
+    void context.resume().catch((error: unknown) => console.warn('Audio playback could not resume.', error))
+  }
+}
 
 function playNotes(notes: Note[]): void {
   if (typeof window === 'undefined' || !window.AudioContext) return
   sharedContext ??= new AudioContext()
   const context = sharedContext
-  if (context.state === 'suspended') void context.resume()
+  resumeAudio(context)
   const startAt = context.currentTime + 0.02
 
   notes.forEach(({ frequency, duration, type = 'sine', volume = 0.12, endFrequency }, index) => {
@@ -37,6 +49,78 @@ export function useSound() {
   const play = useCallback((notes: Note[]) => {
     if (useSettingsStore.getState().soundEnabled) playNotes(notes)
   }, [])
+  const setAmbientEnabled = useCallback((enabled: boolean) => {
+    if (typeof window === 'undefined' || !window.AudioContext) return
+    if (!enabled) {
+      for (const oscillator of ambientOscillators) {
+        try { oscillator.stop() } catch (error) { console.warn('Could not stop ambient audio.', error) }
+      }
+      ambientOscillators = []
+      ambientGain?.disconnect()
+      ambientGain = null
+      return
+    }
+    if (ambientOscillators.length) return
+    sharedContext ??= new AudioContext()
+    const context = sharedContext
+    resumeAudio(context)
+    ambientGain = context.createGain()
+    ambientGain.gain.setValueAtTime(0.0001, context.currentTime)
+    ambientGain.gain.exponentialRampToValueAtTime(0.006, context.currentTime + 1.5)
+    ambientGain.connect(context.destination)
+    for (const [frequency, type] of [[48, 'sine'], [71, 'triangle']] as const) {
+      const oscillator = context.createOscillator()
+      oscillator.type = type
+      oscillator.frequency.setValueAtTime(frequency, context.currentTime)
+      oscillator.connect(ambientGain)
+      oscillator.start()
+      ambientOscillators.push(oscillator)
+    }
+  }, [])
+  const setSuitBreathingEnabled = useCallback((enabled: boolean) => {
+    if (typeof window === 'undefined' || !window.AudioContext) return
+    if (!enabled) {
+      if (suitBreathingTimer !== null) window.clearInterval(suitBreathingTimer)
+      suitBreathingTimer = null
+      suitBreathingSource?.stop()
+      suitBreathingSource?.disconnect()
+      suitBreathingGain?.disconnect()
+      suitBreathingFilter?.disconnect()
+      suitBreathingSource = null
+      suitBreathingGain = null
+      suitBreathingFilter = null
+      return
+    }
+    if (suitBreathingSource) return
+    sharedContext ??= new AudioContext()
+    const context = sharedContext
+    resumeAudio(context)
+    const sampleCount = Math.ceil(context.sampleRate * 2)
+    const noise = context.createBuffer(1, sampleCount, context.sampleRate)
+    const samples = noise.getChannelData(0)
+    for (let index = 0; index < samples.length; index += 1) samples[index] = Math.random() * 2 - 1
+    suitBreathingSource = context.createBufferSource()
+    suitBreathingSource.buffer = noise
+    suitBreathingSource.loop = true
+    suitBreathingFilter = context.createBiquadFilter()
+    suitBreathingFilter.type = 'lowpass'
+    suitBreathingFilter.frequency.setValueAtTime(420, context.currentTime)
+    suitBreathingGain = context.createGain()
+    suitBreathingGain.gain.setValueAtTime(0.0001, context.currentTime)
+    suitBreathingSource.connect(suitBreathingFilter)
+    suitBreathingFilter.connect(suitBreathingGain)
+    suitBreathingGain.connect(context.destination)
+    suitBreathingSource.start()
+    const breathe = () => {
+      const start = context.currentTime + 0.02
+      suitBreathingGain?.gain.cancelScheduledValues(start)
+      suitBreathingGain?.gain.setValueAtTime(0.0001, start)
+      suitBreathingGain?.gain.linearRampToValueAtTime(0.008, start + 0.38)
+      suitBreathingGain?.gain.linearRampToValueAtTime(0.0001, start + 1.15)
+    }
+    breathe()
+    suitBreathingTimer = window.setInterval(breathe, 2600)
+  }, [])
   const playSuccess = useCallback(() => play([
     { frequency: 660, duration: 0.12 },
     { frequency: 880, duration: 0.18 },
@@ -44,6 +128,10 @@ export function useSound() {
   const playError = useCallback(() => play([
     { frequency: 260, duration: 0.18, type: 'triangle' },
     { frequency: 190, duration: 0.24, type: 'triangle' },
+  ]), [play])
+  const playLowOxygen = useCallback(() => play([
+    { frequency: 220, duration: 0.32, type: 'triangle', volume: 0.045, endFrequency: 150 },
+    { frequency: 220, duration: 0.32, type: 'triangle', volume: 0.045, endFrequency: 150 },
   ]), [play])
   const playEvent = useCallback(() => play([
     { frequency: 740, duration: 0.11, type: 'square', volume: 0.07 },
@@ -120,9 +208,12 @@ export function useSound() {
 
   return {
     soundEnabled,
+    setAmbientEnabled,
+    setSuitBreathingEnabled,
     toggleSound: () => setSoundEnabled(!soundEnabled),
     playSuccess,
     playError,
+    playLowOxygen,
     playEvent,
     playWin,
     playLose,

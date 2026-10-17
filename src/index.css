@@ -441,25 +441,6 @@ button:not(:disabled):active { transform: scale(.985); }
   box-shadow: 0 32px 100px rgba(0,0,0,.5);
   animation: panel-arrive .24s ease-out both;
 }
-.assistant-dialog { display: flex; max-width: 72rem; max-height: 92vh; flex-direction: column; gap: 1rem; }
-.assistant-chat-only { min-height: min(75vh, 48rem); }
-.assistant-chat-only-panel { min-height: 0; max-height: none; flex: 1; }
-.assistant-dialog-header { display: flex; align-items: center; gap: .75rem; border-bottom: 1px solid rgba(255,255,255,.08); padding-bottom: .85rem; }
-.assistant-dialog-header > div:first-child { flex: 1; }
-.assistant-avatar { display: grid; height: 2.75rem; width: 2.75rem; flex: none; place-items: center; border: 1px solid rgba(124,228,220,.2); border-radius: 1rem; background: rgba(124,228,220,.07); font-size: 1.45rem; }
-.assistant-api-status { display: inline-flex; align-items: center; gap: .35rem; border: 1px solid rgba(255,255,255,.1); border-radius: 999px; padding: .35rem .6rem; font-size: .63rem; }
-.assistant-api-ready { color: #a7f3d0; }
-.assistant-api-offline, .assistant-api-local { color: #fcd34d; }
-.assistant-api-checking { color: #bae6fd; }
-.assistant-setup { border: 1px solid rgba(253,230,138,.15); border-radius: .9rem; background: rgba(253,230,138,.035); padding: .8rem 1rem; color: #cbd5e1; font-size: .72rem; line-height: 1.7; }
-.assistant-setup summary { cursor: pointer; color: #fde68a; font-weight: 700; }
-.assistant-setup p { margin-top: .5rem; }
-.assistant-setup a { color: #7dd3fc; text-decoration: underline; }
-.assistant-setup code { display: block; margin-top: .6rem; border-radius: .5rem; background: rgba(2,6,23,.7); padding: .65rem; color: #a5f3fc; }
-.assistant-dialog-content { min-height: 0; flex: 1; overflow-y: auto; }
-.assistant-chat-panel { display: flex; min-height: 25rem; max-height: 60vh; flex-direction: column; border: 1px solid rgba(173,207,225,.12); border-radius: 1rem; background: rgba(2,8,17,.38); padding: 1rem; }
-.assistant-message { width: fit-content; max-width: 92%; border: 1px solid rgba(173,207,225,.1); border-radius: .9rem; background: rgba(255,255,255,.04); padding: .65rem .8rem; color: #dbe5f0; font-size: .75rem; line-height: 1.7; white-space: pre-wrap; animation: assistant-message-in .28s cubic-bezier(.2,.75,.3,1) both; }
-.assistant-message.ms-auto { border-color: rgba(124,228,220,.2); background: rgba(124,228,220,.08); color: #e0f2fe; }
 .mission-game > div > header { animation: panel-arrive .42s .02s both; }
 .mission-game > div > section { animation: panel-arrive .46s both; }
 .mission-game > div > section:nth-of-type(1) { animation-delay: .04s; }
@@ -546,9 +527,6 @@ button:not(:disabled):active { transform: scale(.985); }
 :lang(ar) .eyebrow { letter-spacing: 0; font-family: 'IBM Plex Sans Arabic', 'Segoe UI', sans-serif; }
 @media (min-width: 640px) { .modal-card { padding: 1.75rem; } }
 @media (max-width: 640px) {
-  .assistant-dialog-header { flex-wrap: wrap; }
-  .assistant-api-status { order: 1; }
-  .assistant-chat-panel { min-height: 19rem; max-height: 45vh; }
 }
 @keyframes panel-arrive { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes start-card-arrive { from { opacity: 0; transform: translateY(15px) scale(.99); } to { opacity: 1; transform: translateY(0) scale(1); } }
@@ -712,6 +690,8 @@ button:not(:disabled):active { transform: scale(.985); }
 .sleep-sequence > .eyebrow { position: absolute; top: 9%; z-index: 2; }
 .sleep-sequence-caption { position: absolute; bottom: 11%; z-index: 2; color: #cbd5e1; font-size: .8rem; animation: sleep-caption 3.8s ease both; }
 .sleep-sequence-stars { position: absolute; right: 0; bottom: 22%; left: 0; z-index: 2; color: rgba(186,230,253,.55); text-align: center; letter-spacing: 1.5em; animation: sleep-stars 3.8s ease both; }
+.learning-academy { animation: academy-enter .35s cubic-bezier(.2,.75,.3,1) both; }
+@keyframes academy-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes docking-beacon { from { opacity: .7; transform: scale(.5); } to { opacity: 0; transform: scale(1.8); } }
 @media (min-width: 700px) {
   .flight-mission-summary { grid-template-columns: repeat(4,minmax(0,1fr)); }
@@ -727,6 +707,7 @@ button:not(:disabled):active { transform: scale(.985); }
   .spacecraft-phase-landing .spacecraft-viewport-vehicle,
   .flight-launch-plume,
   .flight-launch-countdown span,
+  .learning-academy,
   .spacecraft-viewport-stars,
   .spacecraft-viewport-planet,
   .spacecraft-viewport-vehicle,
@@ -746,7 +727,6 @@ button:not(:disabled):active { transform: scale(.985); }
 @keyframes habitat-window-dim { 0%, 58% { opacity: 1; } 100% { opacity: .3; } }
 @keyframes sleep-caption { 0%, 65% { opacity: 1; } 100% { opacity: .55; } }
 @keyframes sleep-stars { 0%, 40% { opacity: .08; } 100% { opacity: .85; } }
-.map-assistant-pulse { transform-box: fill-box; transform-origin: center; animation: rover-beacon 2.5s ease-out infinite; }
 .map-dawn-glow { background-image: linear-gradient(180deg, rgba(251,191,36,.15), transparent 58%); animation: sky-glow 5s ease-in-out infinite alternate; }
 .map-sunset-glow { background-image: linear-gradient(180deg, transparent 25%, rgba(251,146,60,.18)); animation: sky-glow 6s ease-in-out infinite alternate; }
 .map-night-glow { background-image: linear-gradient(180deg, rgba(5,12,27,.14), rgba(5,12,27,.36)); }
@@ -756,7 +736,6 @@ button:not(:disabled):active { transform: scale(.985); }
 @keyframes viewport-star-drift { to { background-position: 0 220px, 17px 247px; } }
 @keyframes sky-glow { from { opacity: .35; } to { opacity: .85; } }
 @keyframes storm-sweep { from { background-position: 0 0; } to { background-position: 100% 0; } }
-@keyframes assistant-message-in { from { opacity: 0; transform: translateY(6px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-delay: 0ms !important; }
   .base-map-surface animateMotion { display: none; }

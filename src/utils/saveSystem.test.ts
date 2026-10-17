@@ -56,7 +56,7 @@ test('persists pause state, schedule, specialist mode, and an unresolved emergen
     ],
     hour: 18,
     todayActions: ['research'],
-    assistantActionHistory: ['maintenance'],
+    crewSupportActionHistory: ['maintenance'],
   }
 
   saveGame(pausedMission)

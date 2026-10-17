@@ -1,15 +1,16 @@
-import { FlaskConical, Hammer, MoveUpRight, ShieldCheck } from 'lucide-react'
-import { ACTIVITY_DURATIONS, canPerformActivity, type Action, type GameState } from '../game/model'
+import { Dumbbell, FlaskConical, Hammer, MoveUpRight, ShieldCheck } from 'lucide-react'
+import { ACTIVITY_DURATIONS, canScheduleActivity, type Action, type GameState } from '../game/model'
 import ar from '../i18n/ar'
 import en from '../i18n/en'
 import { useSettingsStore } from '../store/settingsStore'
 
-type ActionCopyKey = 'research' | 'researchDesc' | 'explore' | 'exploreDesc' | 'maintenance' | 'maintenanceDesc' | 'rest' | 'restDesc'
+type ActionCopyKey = 'research' | 'researchDesc' | 'explore' | 'exploreDesc' | 'maintenance' | 'maintenanceDesc' | 'exercise' | 'exerciseDesc' | 'rest' | 'restDesc'
 
 const actions: { id: Action; icon: typeof FlaskConical; title: ActionCopyKey; description: ActionCopyKey; tone: string }[] = [
   { id: 'research', icon: FlaskConical, title: 'research', description: 'researchDesc', tone: 'action-sky' },
   { id: 'explore', icon: MoveUpRight, title: 'explore', description: 'exploreDesc', tone: 'action-amber' },
   { id: 'maintenance', icon: Hammer, title: 'maintenance', description: 'maintenanceDesc', tone: 'action-violet' },
+  { id: 'exercise', icon: Dumbbell, title: 'exercise', description: 'exerciseDesc', tone: 'action-sky' },
   { id: 'rest', icon: ShieldCheck, title: 'rest', description: 'restDesc', tone: 'action-emerald' },
 ]
 
@@ -34,7 +35,7 @@ export function ControlPanel({ state, disabled, onAction }: { state: GameState; 
             key={id}
             type="button"
             onClick={() => onAction(id)}
-            disabled={disabled || !canPerformActivity(state, id) || state.hour + ACTIVITY_DURATIONS[id] > 22}
+            disabled={disabled || !canScheduleActivity(state, id)}
             className={`decision-card ${tone} disabled:cursor-not-allowed disabled:opacity-40`}
           >
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/[0.07]"><Icon size={17} /></span>

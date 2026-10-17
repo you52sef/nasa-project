@@ -8,7 +8,7 @@ import { useSettingsStore } from '../store/settingsStore'
 import { useSound } from '../hooks/useSound'
 import { getAvailableCrewRoles, recommendEventResponse } from '../game/teamwork'
 import type { EventChoice } from '../game/events'
-import { RESOURCE_CAP, type GameState } from '../game/model'
+import { getEnergyCapacity, RESOURCE_CAP, type GameState } from '../game/model'
 import { formatResourceValue, RESOURCE_META } from '../game/resources'
 
 const EVENT_EFFECT_RESOURCES = ['energy', 'oxygen', 'water', 'food', 'health', 'credits'] as const
@@ -23,9 +23,8 @@ function describeChoiceEffects(
     const delta = choice.effects[resource]
     if (delta === undefined) return []
     const current = state.resources[resource]
-    const cap = resource === 'energy' && state.buildings.includes('battery') &&
-      !(state.offlineBuildings || []).includes('battery')
-      ? 150
+    const cap = resource === 'energy'
+      ? getEnergyCapacity(state)
       : resource === 'credits'
         ? Number.MAX_SAFE_INTEGER
         : RESOURCE_CAP

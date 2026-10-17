@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Check, ChevronDown, ChevronUp, Construction } from 'lucide-react'
-import { BUILDINGS } from '../game/buildings'
+import { BUILDING_PHASES, BUILDINGS } from '../game/buildings'
 import { canBuild, canToggleBuilding, type GameState } from '../game/model'
 import ar from '../i18n/ar'
 import en from '../i18n/en'
@@ -33,6 +33,9 @@ export function BuildingMenu({ state }: { state: GameState }) {
             const owned = state.buildings.includes(building.id)
             const offline = (state.offlineBuildings || []).includes(building.id)
             const destinationUnavailable = Boolean(building.destination && building.destination !== state.destination)
+            const earlierPhasesComplete = BUILDING_PHASES
+              .filter((phase) => phase.phase < building.phase)
+              .every((phase) => phase.buildings.every((id) => state.buildings.includes(id)))
             const canAfford = canBuild(state, building.id)
             const production = Object.entries(building.production || {})
               .filter(([, amount]) => amount)
@@ -44,7 +47,7 @@ export function BuildingMenu({ state }: { state: GameState }) {
                   <div className="flex gap-2.5">
                     <span className="text-2xl">{building.icon}</span>
                     <div>
-                      <h3 className="text-xs font-bold text-slate-100">{building.name[language]}</h3>
+                      <h3 className="text-xs font-bold text-slate-100">{building.name[language]} <span className="text-[9px] font-medium text-slate-500">{language === 'ar' ? `المرحلة ${building.phase}` : `Phase ${building.phase}`}</span></h3>
                       <p className="mt-1 text-[10px] leading-relaxed text-slate-500">{building.description[language]}</p>
                     </div>
                   </div>
@@ -72,9 +75,21 @@ export function BuildingMenu({ state }: { state: GameState }) {
                       disabled={!canAfford}
                       onClick={() => buildBuilding(building.id)}
                       className="rounded-lg bg-sky-300/10 px-2.5 py-1.5 text-[10px] font-bold text-sky-100 transition hover:bg-sky-300/20 disabled:cursor-not-allowed disabled:opacity-35"
-                      title={destinationUnavailable ? t.unavailable : !canAfford ? t.insufficient : undefined}
+                      title={destinationUnavailable
+                        ? t.unavailable
+                        : !earlierPhasesComplete
+                          ? (language === 'ar' ? 'أكمل جميع مرافق المراحل السابقة أولًا.' : 'Complete all facilities in earlier phases first.')
+                          : !canAfford
+                            ? t.insufficient
+                            : undefined}
                     >
-                      {destinationUnavailable ? t.unavailable : !canAfford ? t.insufficient : t.buildNow}
+                      {destinationUnavailable
+                        ? t.unavailable
+                        : !earlierPhasesComplete
+                          ? (language === 'ar' ? 'مقفل' : 'Locked')
+                          : !canAfford
+                            ? t.insufficient
+                            : t.buildNow}
                     </button>
                   )}
                 </div>

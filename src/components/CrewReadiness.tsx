@@ -8,7 +8,8 @@ export function CrewReadiness({ state, language }: { state: GameState; language:
   const arabic = language === 'ar'
   const t = arabic ? ar : en
   const risk = Math.round(getExplorationRisk(state) * 100)
-  const nextRadiation = Math.round(forecastRadiationExposure(state))
+  const nextRadiation = forecastRadiationExposure(state)
+  const radiationPercent = Math.min(100, nextRadiation / 600 * 100)
   const status = state.fatigue >= 75 || state.morale <= 30
     ? t.restRecommendedLabel
     : t.crewReadyLabel
@@ -39,10 +40,10 @@ export function CrewReadiness({ state, language }: { state: GameState; language:
         <div className="rounded-xl border border-white/[0.05] bg-white/[0.02] p-3">
           <div className="flex items-center justify-between gap-2 text-xs">
             <span className="font-semibold text-slate-300">☢️ {t.cumulativeRadiationLabel}</span>
-            <b className={nextRadiation >= 60 ? 'text-rose-200' : nextRadiation >= 40 ? 'text-amber-200' : 'text-slate-100'}>{nextRadiation}/100</b>
+            <b className={nextRadiation >= 600 ? 'text-rose-200' : nextRadiation >= 400 ? 'text-amber-200' : 'text-slate-100'}>{nextRadiation.toFixed(1)} mSv / 600</b>
           </div>
           <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/[0.07]">
-            <div className={`h-full rounded-full transition-[width] ${nextRadiation >= 60 ? 'bg-rose-400' : nextRadiation >= 40 ? 'bg-amber-300' : 'bg-sky-300'}`} style={{ width: `${nextRadiation}%` }} />
+            <div className={`h-full rounded-full transition-[width] ${nextRadiation >= 600 ? 'bg-rose-400' : nextRadiation >= 400 ? 'bg-amber-300' : 'bg-sky-300'}`} style={{ width: `${radiationPercent}%` }} />
           </div>
           <p className="mt-2 text-[10px] leading-relaxed text-slate-500">
             {t.radiationTrainingNote}

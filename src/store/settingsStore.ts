@@ -13,10 +13,10 @@ interface SettingsState {
 
 function readLanguage(): Language {
   try {
-    return localStorage.getItem(KEY) === 'en' ? 'en' : 'ar'
+    return localStorage.getItem(KEY) === 'ar' ? 'ar' : 'en'
   } catch (error) {
     console.error('Could not read language preference.', error)
-    return 'ar'
+    return 'en'
   }
 }
 

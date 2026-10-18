@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "test": "tsx --test src/game/model.test.ts src/game/siteLayout.test.ts src/game/flightPhysics.test.ts src/utils/leaderboard.test.ts src/utils/saveSystem.test.ts src/store/achievementsStore.test.ts",
+    "test": "tsx --test src/game/model.test.ts src/game/siteLayout.test.ts src/game/flightPhysics.test.ts src/game/missionProfiles.test.ts src/utils/leaderboard.test.ts src/utils/saveSystem.test.ts src/store/achievementsStore.test.ts src/store/missionSetup.test.ts src/store/settingsStore.test.ts src/store/gameStore.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {

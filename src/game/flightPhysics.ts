@@ -1,5 +1,7 @@
 export type OrbitalRoute = 'earth-moon' | 'moon-earth' | 'earth-mars' | 'mars-earth'
 
+export const SIMULATED_TRANSIT_DAYS = { moon: 2, mars: 6 } as const
+
 export interface TransferEstimate {
   route: OrbitalRoute
   durationDays: number

@@ -1,5 +1,6 @@
 import { Dumbbell, FlaskConical, Hammer, MoveUpRight, ShieldCheck } from 'lucide-react'
 import { ACTIVITY_DURATIONS, canScheduleActivity, type Action, type GameState } from '../game/model'
+import { getAllowedSpecialistActions } from '../game/teamwork'
 import ar from '../i18n/ar'
 import en from '../i18n/en'
 import { useSettingsStore } from '../store/settingsStore'
@@ -18,6 +19,7 @@ export function ControlPanel({ state, disabled, onAction }: { state: GameState; 
   const language = useSettingsStore((state) => state.language)
   const t = language === 'ar' ? ar : en
   const remainingHours = Math.max(0, 22 - state.hour)
+  const allowedActions = getAllowedSpecialistActions(state)
   return (
     <section className="glass-panel p-4 sm:p-5">
       <div className="mb-4 flex items-end justify-between">
@@ -30,7 +32,7 @@ export function ControlPanel({ state, disabled, onAction }: { state: GameState; 
         </span>
       </div>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-        {actions.map(({ id, icon: Icon, title, description, tone }) => (
+        {actions.filter(({ id }) => allowedActions.includes(id)).map(({ id, icon: Icon, title, description, tone }) => (
           <button
             key={id}
             type="button"

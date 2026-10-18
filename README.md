@@ -8,7 +8,11 @@ An Arabic–English educational simulator for resource and crew decisions at a f
 
 ## The experience
 
-Choose **Education** to enter the lesson-based Learning Hub and its guided Moon mission, or **Decision Simulation** to configure a mission. Five cumulative lessons combine theory cards, guided interface actions, and mini-simulations. Course progress, attempts, topic mastery, and weak points persist locally. The simulation includes Arabic and English interfaces, crew roles, seeded scenarios and events, construction phases, field operations, ECLSS, greenhouse and ISRU mechanics, radiation tracking, animated telemetry, sound effects, and an autosaved campaign.
+Choose **Education** to enter the lesson-based Learning Hub and its guided Moon mission, or **Decision Simulation** to configure a mission. Each destination-specific mission profile displays its assumed minimum crew, equipment checklist, and daily surface activities, and selecting a profile configures a compatible crew roster. These checklists are educational planning guidance, not NASA-certified operational requirements; linked NASA references provide scientific context. Five cumulative lessons combine theory cards, guided interface actions, and mini-simulations. Course progress, attempts, topic mastery, and weak points persist locally. The simulation includes Arabic and English interfaces, crew roles, seeded scenarios and events, construction phases, field operations, ECLSS, greenhouse and ISRU mechanics, radiation tracking, animated telemetry, sound effects, and an autosaved campaign.
+
+Mission purpose choices are destination-specific: lunar surface sample and radiation science or lunar base infrastructure; Mars opposition regolith, ice and astrobiology exploration or conjunction greenhouse, Sabatier and self-sustainability work. The profile asks for an astronaut name and a crew duty, then shows that crewmember's daily duty completion from the activity actually performed that mission day. English is the first-visit language; an explicitly saved language preference is retained.
+
+The surface map places the habitat and crew facilities near the base center, separates power generation at the perimeter, and keeps the landing pad beyond its modeled 100 m habitat setback. The crew panel (full control) and role-specific Comm-Link (specialist control) let players send requests to assigned crewmembers. On-device rules assess specialty, fatigue, resources, workload, and active emergencies; accepted and declined requests appear in the daily debrief.
 
 All simulation decisions, crew support recommendations, events, and telemetry use deterministic or seeded on-device rules. The project has no third-party AI integration, external AI API, or server-side chat feature. Crew titles such as “AI/Robotics Engineer” describe a requested mission role, not an AI system.
 
@@ -42,7 +46,7 @@ The production build is a static Vite app with an installable PWA and offline ap
 
 ## Languages, accessibility, and persistence
 
-- Arabic and English interfaces with right-to-left and left-to-right layouts.
+- Arabic and English interfaces with right-to-left and left-to-right layouts; English is the default for first-time visitors.
 - Responsive layouts and keyboard-accessible controls.
 - Motion follows `prefers-reduced-motion`.
 - Mission state, Academy progress, preferences, achievements, and personal records stay in browser storage on the current device.

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { BUILDINGS } from '../game/buildings'
 import { MISSION_OPERATIONS, canStartOperation } from '../game/operations'
 import type { GameState } from '../game/model'
+import { getMissionCrewAssignments } from '../game/teamwork'
 import { useGameStore } from '../store/gameStore'
 import { useSettingsStore } from '../store/settingsStore'
 
@@ -16,6 +17,14 @@ export function MissionOperations({ state }: { state: GameState }) {
   const activeDefinition = active
     ? MISSION_OPERATIONS.find((operation) => operation.id === active.id)
     : undefined
+  const controlledSpecialty = state.controlMode === 'specialist'
+    ? getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays)
+      .find((assignment) => assignment.id === state.controlledDutyId)?.specialty
+    : undefined
+  const availableOperations = MISSION_OPERATIONS.filter((operation) =>
+    !controlledSpecialty ||
+    operation.requiredCrewSpecialties.some((group) => group.includes(controlledSpecialty)),
+  )
 
   return (
     <section className="mb-4 rounded-2xl border border-cyan-200/10 bg-slate-950/45 p-4 sm:p-5" aria-labelledby="surface-operations-title">
@@ -84,7 +93,7 @@ export function MissionOperations({ state }: { state: GameState }) {
       ) : null}
 
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
-        {MISSION_OPERATIONS.map((operation) => {
+        {availableOperations.map((operation) => {
           const ready = canStartOperation(state, operation.id)
           const localizedName = operation.title[language]
           const requirements = operation.requiredBuildings

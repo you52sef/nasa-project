@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { BookOpen, Home, Save, Settings2, Sparkles, StopCircle, Volume2, VolumeX } from 'lucide-react'
+import { Activity, BarChart3, BatteryCharging, BookOpen, Boxes, Clock3, Database, HardHat, Home, MessageCircle, Radio, Save, Send, Settings2, StopCircle, Users, Volume2, VolumeX, Wrench, X } from 'lucide-react'
 import type { GameState } from '../game/model'
-import { canSleepAndAdvance, canWaitUntilBedtime, getEnergyCapacity, getObjectiveProgress, getObjectiveTarget, MISSION_BEDTIME } from '../game/model'
+import { canSleepAndAdvance, canWaitUntilBedtime, getCompletedWorkShifts, getEnergyCapacity, getMarsCommunicationDelayMinutes, getObjectiveProgress, getObjectiveTarget, MISSION_BEDTIME } from '../game/model'
+import { getCrewDailyRoutine } from '../game/constants'
 import ar from '../i18n/ar'
 import en from '../i18n/en'
 import { useGameStore } from '../store/gameStore'
@@ -20,20 +21,33 @@ import { AchievementsPanel } from './AchievementsPanel'
 import { SCENARIOS } from '../game/scenarios'
 import { MissionLog } from './MissionLog'
 import { CrewCouncil } from './CrewCouncil'
-import { CREW_ROLES } from '../game/teamwork'
+import { CREW_ROLES, getMissionCrewAssignments } from '../game/teamwork'
+import { localizeCrewRole } from '../game/crewRosters'
 import { FlightExperience } from './FlightExperience'
 import { formatResourceValue, RESOURCE_META } from '../game/resources'
+import { ResourceBar } from './ResourceBar'
 import { SurvivalSystems } from './SurvivalSystems'
 import { TelemetryDashboard } from './TelemetryDashboard'
 import { MissionOperations } from './MissionOperations'
 import { GreenhousePanel } from './GreenhousePanel'
 import { LearningAcademy } from './LearningAcademy'
+import { DataOriginsModal } from './DataOriginsModal'
+import { AstronautProfileHud } from './AstronautProfileHud'
+import { MISSION_PROFILES } from '../game/missionProfiles'
+import { EveningDebrief } from './EveningDebrief'
+import { CrewCommLink } from './CrewCommLink'
+
+import { getAccessibleMissionPanels } from '../game/teamwork'
+import type { MissionPanelId } from '../game/teamwork'
+
+type MissionSidePanel = MissionPanelId
 
 export function GameScreen({ state }: { state: GameState }) {
   const language = useSettingsStore((store) => store.language)
   const t = language === 'ar' ? ar : en
   const advanceDay = useGameStore((store) => store.advanceDay)
   const sleepAndAdvance = useGameStore((store) => store.sleepAndAdvance)
+  const acknowledgeEveningDebrief = useGameStore((store) => store.acknowledgeEveningDebrief)
   const waitUntilBedtime = useGameStore((store) => store.waitUntilBedtime)
   const chooseTransit = useGameStore((store) => store.chooseTransit)
   const save = useGameStore((store) => store.save)
@@ -41,26 +55,38 @@ export function GameScreen({ state }: { state: GameState }) {
   const pauseAndReturnToMain = useGameStore((store) => store.pauseAndReturnToMain)
   const endMission = useGameStore((store) => store.endMission)
   const [schoolOpen, setSchoolOpen] = useState(false)
+  const [dataOriginsOpen, setDataOriginsOpen] = useState(false)
   const [notice, setNotice] = useState('')
   const [confirmEndMission, setConfirmEndMission] = useState(false)
   const [sleeping, setSleeping] = useState(false)
+  const [surfaceArrival, setSurfaceArrival] = useState(false)
+  const [sidePanel, setSidePanel] = useState<MissionSidePanel | null>(null)
+  const [routineOpen, setRoutineOpen] = useState(false)
+  const [queuedDebriefDay, setQueuedDebriefDay] = useState<number | null>(null)
   const sleepTimer = useRef<number | null>(null)
   const noticeTimer = useRef<number | null>(null)
+  const arrivalTimer = useRef<number | null>(null)
   const sleepInProgress = useRef(false)
   const oxygenAlertActive = useRef(false)
   const { soundEnabled, toggleSound, playSuccess, playLowOxygen, setAmbientEnabled, setSuitBreathingEnabled } = useSound()
   const isArabic = language === 'ar'
-  const objectiveTitle = state.objective === 'survival'
-    ? t.objective_survival
-    : state.objective === 'science'
-      ? t.objective_science
-      : state.objective === 'exploration'
-        ? t.objective_exploration
-        : t.objective_tutorial
+  const objectiveTitle = state.objective === 'tutorial'
+    ? t.objective_tutorial
+    : MISSION_PROFILES[state.missionType].goal[language]
   const objectiveProgress = getObjectiveProgress(state)
   const objectiveTarget = getObjectiveTarget(state)
   const objectiveProgressPercent = Math.min(100, objectiveProgress / objectiveTarget * 100)
+  const acceptedCrewRequestsToday = state.crewCommunications
+    .filter((request) => request.day === state.day && request.decision === 'accepted').length
   const activeRole = CREW_ROLES.find((role) => role.id === state.controlledRole)
+  const activeDuty = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays)
+    .find((duty) => duty.id === state.controlledDutyId)
+  const accessiblePanels = getAccessibleMissionPanels(state)
+  const controlledSpecialty = activeDuty?.specialty
+  const canManageGreenhouse = state.controlMode !== 'specialist' ||
+    ['agriculture', 'agriculture-resources', 'geology-agriculture'].includes(activeDuty?.specialty || '')
+  const canManageFieldOperations = state.controlMode !== 'specialist' ||
+    ['command', 'pilot', 'science', 'engineering', 'power', 'resources', 'robotics', 'engineering-science', 'geology-agriculture', 'agriculture-resources'].includes(activeDuty?.specialty || '')
   const energyCapacity = getEnergyCapacity(state)
   const criticalResources = (['energy', 'oxygen', 'water', 'food', 'health'] as const)
     .filter((resource) => state.resources[resource] <= (resource === 'energy' ? energyCapacity : 100) * 0.25)
@@ -81,6 +107,14 @@ export function GameScreen({ state }: { state: GameState }) {
       showNotice(isArabic ? 'تم حفظ المهمة على هذا الجهاز.' : 'Mission saved on this device.')
     } catch (error) {
       showNotice(error instanceof Error ? error.message : 'Save failed.')
+    }
+  }
+
+  const handleAcknowledgeDebrief = () => {
+    try {
+      acknowledgeEveningDebrief()
+    } catch (error) {
+      showNotice(error instanceof Error ? error.message : 'Unable to save the debrief acknowledgment.')
     }
   }
 
@@ -126,6 +160,7 @@ export function GameScreen({ state }: { state: GameState }) {
   useEffect(() => () => {
     if (sleepTimer.current !== null) window.clearTimeout(sleepTimer.current)
     if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current)
+    if (arrivalTimer.current !== null) window.clearTimeout(arrivalTimer.current)
     sleepInProgress.current = false
   }, [])
   useEffect(() => {
@@ -145,172 +180,243 @@ export function GameScreen({ state }: { state: GameState }) {
   const needsTransitDecision = (state.missionPhase === 'outbound' || state.missionPhase === 'return') && !hasTransitDecision
   const transitLeg = state.missionPhase === 'outbound' ? 'outbound' : 'return'
   const handleTransitArrival = useCallback((leg: 'outbound' | 'return', choice: Parameters<typeof chooseTransit>[1]) => {
+    if (leg === 'outbound') {
+      setSurfaceArrival(true)
+      arrivalTimer.current = window.setTimeout(() => {
+        setSurfaceArrival(false)
+        arrivalTimer.current = null
+      }, 1_500)
+    }
     chooseTransit(leg, choice)
   }, [chooseTransit])
-  const clock = `${String(Math.floor(state.hour)).padStart(2, '0')}:${state.hour % 1 ? '30' : '00'}`
+  const clockMinutes = Math.round(state.hour * 60)
+  const clock = `${String(Math.floor(clockMinutes / 60) % 24).padStart(2, '0')}:${String(clockMinutes % 60).padStart(2, '0')}`
   const timeOfDay = state.hour < 8 ? 'dawn' : state.hour >= 20 ? 'night' : state.hour >= 17 ? 'dusk' : 'day'
+  const latestReport = state.dailyReports[state.dailyReports.length - 1]
+  const showEveningDebrief = state.missionPhase === 'surface' &&
+    canSleepAndAdvance(state) &&
+    state.lastDebriefDay !== state.day
+  const signalDelay = latestReport?.earthTransmission?.delayMinutes ??
+    (state.destination === 'mars'
+      ? getMarsCommunicationDelayMinutes(state.missionSeed, latestReport?.day || state.day, 'research')
+      : 2)
+  const reportQueued = latestReport?.earthTransmission?.status === 'queued' ||
+    (!latestReport?.earthTransmission && state.destination === 'mars')
+  const panelDetails: Record<MissionSidePanel, { label: string; icon: typeof Database }> = {
+    resources: { label: isArabic ? 'الموارد' : 'Resources', icon: Boxes },
+    crew: { label: isArabic ? 'الطاقم' : 'Crew', icon: Users },
+    systems: { label: isArabic ? 'دعم الحياة والطاقة' : 'ECLSS & power', icon: BatteryCharging },
+    operations: { label: isArabic ? 'الأنشطة والعمليات' : 'Activities & operations', icon: Wrench },
+    infrastructure: { label: isArabic ? 'المباني والإنشاء' : 'Buildings & construction', icon: HardHat },
+    forecast: { label: isArabic ? 'توقع الموارد' : 'Resource forecast', icon: BarChart3 },
+    communications: { label: isArabic ? 'التواصل مع الطاقم' : 'Crew Comm-Link', icon: MessageCircle },
+  }
+
+  useEffect(() => {
+    if (sidePanel && !accessiblePanels.includes(sidePanel)) setSidePanel(null)
+  }, [sidePanel, state.controlMode, state.controlledDutyId, state.destination, state.crewSize, state.maxDays])
+
+  useEffect(() => {
+    if (sidePanel && state.missionPhase !== 'surface') setSidePanel(null)
+  }, [sidePanel, state.missionPhase])
+
+  useEffect(() => {
+    if (!sidePanel) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSidePanel(null)
+    }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [sidePanel])
 
   if (needsTransitDecision) {
     return <FlightExperience state={state} leg={transitLeg} onArrive={handleTransitArrival} />
   }
 
   return (
-    <main className={`mission-game mission-light-${timeOfDay} min-h-screen px-3 pb-10 pt-4 text-white sm:px-6 sm:pt-7`} dir={isArabic ? 'rtl' : 'ltr'}>
-      <div className="mx-auto max-w-7xl">
-        <header className="mission-header mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-sky-100/10 bg-sky-100/[0.06] text-2xl">🚀</div>
-            <div className="min-w-0">
-              <p className="eyebrow"><span className="h-1.5 w-1.5 rounded-full bg-emerald-300" /> {t.currentMission}</p>
-              <h1 className="mt-1 truncate text-lg font-black sm:text-xl">{state.baseName}</h1>
-              <p className="mt-1 text-[10px] text-slate-500">{state.destination === 'moon' ? '🌙' : '🔴'} {state.destination === 'moon' ? t.moon : t.mars} · 🚀 {t[state.missionPhase]}</p>
-            </div>
+    <main className={`mission-game mission-command-screen mission-light-${timeOfDay}${surfaceArrival ? ' mission-base-arrival' : ''}${routineOpen ? ' mission-routine-expanded' : ''}`} dir={isArabic ? 'rtl' : 'ltr'}>
+      <header className="mission-command-header">
+        <div className="mission-command-clock">
+          <span className="mission-command-destination" aria-hidden="true">{state.destination === 'moon' ? '🌙' : '🔴'}</span>
+          <div>
+            <h1>{state.baseName}</h1>
+            <p><Clock3 size={12} /> {state.destination === 'mars' ? 'Sol' : (isArabic ? 'اليوم' : 'LUNAR DAY')} {String(state.day).padStart(2, '0')} · <b dir="ltr">{clock}</b></p>
           </div>
+          <span className={`mission-daylight-indicator is-${timeOfDay}`}><i />{isArabic ? (timeOfDay === 'night' ? 'ليل' : 'نهار') : timeOfDay}</span>
+        </div>
+
+        <div className="mission-command-ticker"><MissionLog state={state} language={language} /></div>
+
+        <div className="mission-command-actions">
+          <div className="mission-signal-readout" title={isArabic ? 'تأخير اتصال محاكى؛ لا يوجد إرسال شبكي فعلي.' : 'Modeled communication delay; no live network transmission.'}>
+            <Radio size={14} aria-hidden="true" />
+            <span>{state.destination === 'mars' ? `${isArabic ? 'تأخير المريخ' : 'MARS DELAY'} · ${signalDelay} ${isArabic ? 'د' : 'min'}` : `${isArabic ? 'وصلة القمر' : 'LUNAR LINK'} · 2 ${isArabic ? 'ث' : 's'}`}</span>
+          </div>
+          <button
+            type="button"
+            className="mission-report-send"
+            disabled={!latestReport}
+            title={isArabic ? 'تقرير اليوم يُجهّز تلقائيًا ويُضاف إلى قائمة الإرسال المحاكية' : 'Daily reports are compiled and queued automatically for simulated uplink'}
+            onClick={() => {
+              if (!latestReport) return
+              showNotice(isArabic
+                ? reportQueued
+                  ? `تقرير اليوم ${latestReport.day} في قائمة الإرسال المحاكية · التأخير ${signalDelay} دقيقة. لا يتم اتصال شبكي فعلي.`
+                  : `حُفظ تقرير اليوم ${latestReport.day} محليًا. لا يتم اتصال شبكي فعلي.`
+                : reportQueued
+                  ? `Day ${latestReport.day} report is in the simulated uplink queue · ${signalDelay} min delay. No live network connection.`
+                  : `Day ${latestReport.day} report is stored locally. No live network connection.`)
+            }}
+          >
+            <Send size={14} aria-hidden="true" /> <span>{reportQueued ? (isArabic ? 'التقرير في قائمة الإرسال' : 'Report queued') : (isArabic ? 'التقرير محفوظ' : 'Report stored')}</span>
+          </button>
+          <AstronautProfileHud state={state} language={language} />
+          <div className="mission-language-switch"><LanguageSwitch /></div>
           <details className="mission-menu">
-            <summary><Settings2 size={15} /> {t.missionMenuLabel}</summary>
+            <summary aria-label={t.missionMenuLabel}><Settings2 size={17} /><span>{t.missionMenuLabel}</span></summary>
             <div className="mission-menu-panel">
               <p className="mission-menu-metadata">
                 {state.missionMode === 'education' ? t.educationSection : t.simulationSection}
-                {' · '}{state.controlMode === 'specialist' && activeRole ? `${activeRole.icon} ${t[activeRole.title]}` : t.fullControlTitle}
+                {' · '}{state.controlMode === 'specialist' && activeRole
+                  ? `${activeRole.icon} ${activeDuty ? localizeCrewRole(activeDuty.title, language) : t[activeRole.title]}`
+                  : t.fullControlTitle}
                 {' · '}{state.difficulty === 'easy' ? '🟢' : state.difficulty === 'normal' ? '🟡' : '🔴'} {t[state.difficulty]}
                 {' · '}{SCENARIOS[state.scenario || 'baseline'].icon} {SCENARIOS[state.scenario || 'baseline'].name[language]}
               </p>
+              {state.controlMode === 'specialist' && activeDuty ? <p className="mt-2 text-[10px] leading-5 text-slate-400">{activeDuty.duty[language]}</p> : null}
               <div className="mission-menu-actions">
                 <AchievementsPanel />
                 <button type="button" onClick={() => setSchoolOpen(true)} className="secondary-button !px-3 !py-2 text-xs"><BookOpen size={15} /> {t.lessons}</button>
+                <button type="button" onClick={() => setDataOriginsOpen(true)} className="secondary-button !px-3 !py-2 text-xs"><Database size={15} /> {t.dataOriginsLabel}</button>
                 <button type="button" onClick={handleSave} className="secondary-button !px-3 !py-2 text-xs"><Save size={15} /> {t.save}</button>
                 <button type="button" onClick={handlePauseAndReturn} className="secondary-button !px-3 !py-2 text-xs" aria-label={t.pauseAndReturn}><Home size={15} /> {t.pauseAndReturn}</button>
-                <button type="button" onClick={() => setConfirmEndMission(true)} disabled={Boolean(state.activeEvent)} className="secondary-button !px-3 !py-2 text-xs text-amber-100 disabled:cursor-not-allowed disabled:opacity-40" aria-label={t.endMission}>
-                  <StopCircle size={15} /> {t.endMission}
-                </button>
-                <button type="button" onClick={toggleSound} className="secondary-button !px-3 !py-2 text-xs">
-                  {soundEnabled ? <Volume2 size={15} /> : <VolumeX size={15} />}{soundEnabled ? t.muteSound : t.unmuteSound}
-                </button>
-                <LanguageSwitch />
+                <button type="button" onClick={() => setConfirmEndMission(true)} disabled={Boolean(state.activeEvent)} className="secondary-button !px-3 !py-2 text-xs text-amber-100 disabled:cursor-not-allowed disabled:opacity-40" aria-label={t.endMission}><StopCircle size={15} /> {t.endMission}</button>
+                <button type="button" onClick={toggleSound} className="secondary-button !px-3 !py-2 text-xs">{soundEnabled ? <Volume2 size={15} /> : <VolumeX size={15} />}{soundEnabled ? t.muteSound : t.unmuteSound}</button>
               </div>
             </div>
           </details>
-        </header>
+        </div>
+      </header>
 
-        <section className="mb-4 grid gap-3 sm:grid-cols-[1fr_auto] sm:items-center rounded-2xl border border-cyan-200/[0.12] bg-cyan-100/[0.025] px-4 py-3" aria-label={t.dailyScheduleTitle}>
-          <div>
-            <p className="text-xs font-bold text-cyan-100">{t.dailyScheduleTitle} · {t.operationCycle} {state.day}</p>
-            <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
-              <span className={`rounded-full border px-2 py-1 ${state.todayActions.includes('exercise') ? 'border-emerald-300/20 text-emerald-200' : 'border-amber-300/20 text-amber-200'}`}>
-                {state.todayActions.includes('exercise') ? '✓' : '○'} {t.dailyExerciseRequirement}
-              </span>
-              <span className={`rounded-full border px-2 py-1 ${state.todayActions.some((action) => action === 'maintenance' || action === 'research' || action === 'explore') ? 'border-emerald-300/20 text-emerald-200' : 'border-amber-300/20 text-amber-200'}`}>
-                {state.todayActions.some((action) => action === 'maintenance' || action === 'research' || action === 'explore') ? '✓' : '○'} {t.dailyWorkRequirement}
-              </span>
-            </div>
-            <p className="mt-1 text-[11px] text-slate-400">
-              {t.currentTimeLabel}: <b className="text-white" dir="ltr">{clock}</b> · {t.scheduledActivitiesLabel}: {state.todayActions.length}
-              {state.todayActions.length ? ` · ${state.todayActions.map((action) => t[`action_${action}`]).join(' · ')}` : ''}
-            </p>
-            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/[0.07]">
-              <div className="h-full rounded-full bg-gradient-to-r from-cyan-300 to-violet-300 transition-all duration-700" style={{ width: `${Math.min(100, (state.hour - 6) / 16 * 100)}%` }} />
-            </div>
-          </div>
-          <div className="flex flex-wrap justify-end gap-2">
-            {state.hour < MISSION_BEDTIME ? (
-              <button type="button" onClick={waitUntilBedtime} disabled={!canWaitUntilBedtime(state)} className="secondary-button !px-4 !py-2 text-xs disabled:cursor-not-allowed disabled:opacity-40">
-                {t.waitUntilBedtime}
+      <section className="mission-command-map-stage" aria-label={t.siteMapLabel}>
+        <nav className="mission-side-rail" aria-label={isArabic ? 'لوحات التحكم' : 'Mission panels'}>
+          {(Object.entries(panelDetails) as [MissionSidePanel, typeof panelDetails[MissionSidePanel]][])
+            .filter(([id]) => accessiblePanels.includes(id))
+            .map(([id, detail]) => {
+            const Icon = detail.icon
+            return (
+              <button
+                key={id}
+                type="button"
+                className="mission-side-rail-button"
+                aria-label={detail.label}
+                aria-pressed={sidePanel === id}
+                title={detail.label}
+                onClick={() => setSidePanel((current) => current === id ? null : id)}
+              >
+                <Icon size={19} aria-hidden="true" />
+                <span>{detail.label}</span>
+                {id === 'resources' && criticalResources.length ? <i className="mission-rail-alert" aria-label={isArabic ? 'تنبيه موارد' : 'Resource alert'} /> : null}
               </button>
-            ) : null}
-            <button type="button" onClick={handleSleep} disabled={sleeping || !canSleepAndAdvance(state)} className="primary-button !px-4 !py-2 text-xs disabled:cursor-not-allowed disabled:opacity-40">
-              🌙 {t.sleepAndNextDay}
-            </button>
+            )
+          })}
+        </nav>
+
+        <div className="mission-command-map-wrap">
+          <BaseView state={state} onAction={handleAction} className="mission-command-map" />
+          <div className="mission-objective-chip" title={objectiveTitle}>
+            <span>{state.destination === 'moon' ? '🌙' : '🔴'} {objectiveTitle}</span>
+            <span>
+              {Math.min(objectiveProgress, objectiveTarget)} / {objectiveTarget} · {Math.round(objectiveProgressPercent)}%
+              {acceptedCrewRequestsToday ? ` · ${acceptedCrewRequestsToday} ${isArabic ? 'تكليفات مقبولة' : 'crew requests accepted'}` : ''}
+            </span>
+            <i><b style={{ width: `${objectiveProgressPercent}%` }} /></i>
           </div>
-          {state.lastMessage ? <p role="status" className="text-[10px] leading-5 text-cyan-100/75 sm:col-span-2">{state.lastMessage}</p> : null}
-        </section>
-        {criticalResources.length ? (
-          <section className="resource-attention mb-4" role="status" aria-live="polite">
-            <div>
-              <p className="text-xs font-black text-rose-100">{t.resourceAttentionTitle}</p>
-              <p className="mt-1 text-[10px] leading-5 text-rose-100/70">{t.resourceAttentionDescription}</p>
-            </div>
-            <ul className="flex flex-wrap gap-2">
+          {criticalResources.length ? (
+            <div className="mission-critical-strip" role="status" aria-live="polite">
+              <strong>{t.resourceAttentionTitle}</strong>
               {criticalResources.map((resource) => (
-                <li key={resource} className="rounded-lg border border-rose-200/15 bg-rose-950/30 px-2.5 py-1.5 text-[11px] font-bold text-rose-100">
-                  {resource === 'energy' ? '⚡' : resource === 'oxygen' ? '💨' : resource === 'water' ? '💧' : resource === 'food' ? '🌱' : '❤️'}
-                  {' '}{RESOURCE_META[resource].label[language]} · {formatResourceValue(resource, state.resources[resource], language)}
-                </li>
+                <span key={resource}>
+                  {RESOURCE_META[resource].icon} {RESOURCE_META[resource].label[language]} · {formatResourceValue(resource, state.resources[resource], language)}
+                </span>
               ))}
-            </ul>
-          </section>
+            </div>
+          ) : null}
+        </div>
+
+        {sidePanel ? (
+          <aside className="mission-side-drawer" aria-labelledby="mission-side-drawer-title">
+            <header>
+              <div><p>{isArabic ? 'مركز المهمة' : 'MISSION CONTROL'}</p><h2 id="mission-side-drawer-title">{panelDetails[sidePanel].label}</h2></div>
+              <button type="button" onClick={() => setSidePanel(null)} aria-label={isArabic ? 'إغلاق اللوحة' : 'Close panel'}><X size={18} /></button>
+            </header>
+            <div className="mission-side-drawer-content">
+              {sidePanel === 'resources' ? <ResourceBar resources={state.resources} language={language} energyCapacity={energyCapacity} /> : null}
+              {sidePanel === 'crew' ? (
+                <div className="grid gap-3">
+                  <CrewReadiness state={state} language={language} />
+                  <CrewCouncil state={state} />
+                </div>
+              ) : null}
+              {sidePanel === 'communications' ? <CrewCommLink state={state} /> : null}
+              {sidePanel === 'systems' ? (
+                <div className="grid gap-3">
+                  {controlledSpecialty === 'medical' ? <CrewReadiness state={state} language={language} /> : <SurvivalSystems state={state} />}
+                  {controlledSpecialty !== 'medical' ? <TelemetryDashboard state={state} language={language} /> : null}
+                </div>
+              ) : null}
+              {sidePanel === 'operations' ? (
+                <div className="grid gap-3">
+                  {state.objective === 'tutorial' && state.controlMode === 'full' ? <TutorialGuide completed={state.tutorialSteps} language={language} /> : null}
+                  <ControlPanel state={state} disabled={Boolean(state.activeEvent) || needsTransitDecision} onAction={handleAction} />
+                  {canManageFieldOperations ? <MissionOperations state={state} /> : null}
+                  {canManageGreenhouse ? <GreenhousePanel state={state} /> : null}
+                </div>
+              ) : null}
+              {sidePanel === 'infrastructure' ? <BuildingMenu state={state} /> : null}
+              {sidePanel === 'forecast' ? <ForecastTable state={state} language={language} onPreview={() => markTutorialStep('forecast')} /> : null}
+            </div>
+          </aside>
         ) : null}
-        <SurvivalSystems state={state} />
-        <TelemetryDashboard state={state} language={language} />
-        <MissionOperations state={state} />
-        <GreenhousePanel state={state} />
-        <details className="mission-detail-disclosure mb-3">
-          <summary>{t.teamCouncilTitle} <span>{t.teamCouncilSummary}</span></summary>
-          <CrewCouncil state={state} />
-        </details>
+      </section>
 
-        <section className="mb-4 grid gap-3 lg:grid-cols-[1fr_1fr_auto] lg:items-center">
-          <div className="flex items-center gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.025] px-4 py-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-orange-100/[0.07] text-orange-200"><span className="font-black">{String(state.day).padStart(2, '0')}</span></div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-bold text-slate-100">{t.operationCycle} {state.day} <span className="font-medium text-slate-500">{t.of} {state.maxDays}</span></p>
-                <p className="text-[10px] text-slate-600">{Math.round(state.daysSurvived / state.maxDays * 100)}%</p>
-              </div>
-              <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/[0.07]">
-                <div className="h-full rounded-full bg-gradient-to-r from-orange-300 to-sky-300 transition-all" style={{ width: `${Math.max(0, state.daysSurvived / state.maxDays * 100)}%` }} />
-              </div>
+      <details className={`mission-routine-dock${routineOpen ? ' is-open' : ''}`} open={routineOpen} onToggle={(event) => setRoutineOpen(event.currentTarget.open)}>
+        <summary>
+          <span className="mission-routine-icon"><Activity size={16} /></span>
+          <span className="mission-routine-title">{t.dailyScheduleTitle} · {state.destination === 'mars' ? 'Sol' : t.operationCycle} {state.day}</span>
+          <span className="mission-routine-time" dir="ltr">{clock}</span>
+          <span className={`mission-routine-status ${state.todayActions.includes('exercise') ? 'is-done' : ''}`}>{state.todayActions.includes('exercise') ? '✓' : '○'} 2.5h</span>
+          <span className={`mission-routine-status ${getCompletedWorkShifts(state.todayActions) >= 2 ? 'is-done' : ''}`}>{getCompletedWorkShifts(state.todayActions)}/2 {t.dailyWorkRequirement}</span>
+          <span className="mission-routine-chevron" aria-hidden="true">⌃</span>
+        </summary>
+        <div className="mission-routine-body">
+          <div className="mission-routine-progress"><span style={{ width: `${Math.max(0, Math.min(100, (state.hour - 6) / 16 * 100))}%` }} /></div>
+          <ol aria-label={t.dailyRoutineTitle}>
+            {getCrewDailyRoutine(state.destination).map((item, index) => {
+              const workShifts = getCompletedWorkShifts(state.todayActions)
+              const complete = item.id === 'exercise'
+                ? state.todayActions.includes('exercise')
+                : item.id === 'shift-1'
+                  ? workShifts >= 1
+                  : item.id === 'shift-2'
+                    ? workShifts >= 2
+                    : state.hour >= 6 + getCrewDailyRoutine(state.destination).slice(0, index + 1).reduce((total, block) => total + block.hours, 0)
+              const mandatory = item.id === 'exercise' || item.id.startsWith('shift-')
+              return <li key={item.id} className={`${complete ? 'is-done' : ''}${mandatory ? ' is-mandatory' : ''}`}><span>{complete ? '✓' : mandatory ? '○' : '·'}</span><b>{item.label[language]}</b><small>{item.hours}h</small></li>
+            })}
+          </ol>
+          <div className="mission-routine-actions">
+            <p>{t.currentTimeLabel}: <b dir="ltr">{clock}</b> · {t.scheduledActivitiesLabel}: {state.todayActions.length}</p>
+            {state.lastMessage ? <p role="status">{state.lastMessage}</p> : null}
+            <div>
+              {state.hour < MISSION_BEDTIME ? <button type="button" onClick={waitUntilBedtime} disabled={!canWaitUntilBedtime(state)} className="secondary-button !px-4 !py-2 text-xs disabled:cursor-not-allowed disabled:opacity-40">{t.waitUntilBedtime}</button> : null}
+              <button type="button" onClick={handleSleep} disabled={sleeping || !canSleepAndAdvance(state)} className="primary-button !px-4 !py-2 text-xs disabled:cursor-not-allowed disabled:opacity-40">🌙 {t.sleepAndNextDay}</button>
             </div>
-          </div>
-          <div className="rounded-2xl border border-violet-200/[0.08] bg-violet-100/[0.025] px-4 py-3">
-            <div className="flex items-center justify-between gap-2">
-              <p className="truncate text-xs font-bold text-violet-100">{objectiveTitle}</p>
-              <p className="text-[10px] text-slate-500">{t.objectiveProgress}</p>
-            </div>
-            <div className="mt-2 flex items-center justify-between text-[10px] text-slate-500">
-              <span>{Math.min(objectiveProgress, objectiveTarget)} / {objectiveTarget}</span>
-              <span>{Math.round(objectiveProgressPercent)}%</span>
-            </div>
-            <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/[0.07]">
-              <div className="h-full rounded-full bg-violet-300 transition-all" style={{ width: `${objectiveProgressPercent}%` }} />
-            </div>
-          </div>
-          <div className="flex items-center justify-center gap-2 rounded-2xl border border-white/[0.07] bg-white/[0.025] px-4 py-3">
-            <Sparkles size={15} className="text-amber-200" />
-            <span className="text-xs text-slate-400">{t.scienceLabel}</span>
-            <b className="text-sm text-white">{state.science}</b>
-          </div>
-        </section>
-
-        {state.objective === 'tutorial' ? <TutorialGuide completed={state.tutorialSteps} language={language} /> : null}
-
-        <div className="mb-4">
-          <BaseView state={state} onAction={handleAction} />
-        </div>
-
-        <details className="mission-detail-disclosure mt-3">
-          <summary>{t.crewReadinessLabel} <span>{state.fatigue >= 75 || state.morale <= 25 ? t.restRecommendedLabel : t.crewReadyLabel}</span></summary>
-          <div className="mt-3"><CrewReadiness state={state} language={language} /></div>
-        </details>
-
-        <div className="mt-4 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-          <div className="flex flex-col gap-4">
-            <ForecastTable state={state} language={language} onPreview={() => markTutorialStep('forecast')} />
-          </div>
-          <div className="flex flex-col gap-4">
-            <ControlPanel state={state} disabled={Boolean(state.activeEvent) || needsTransitDecision} onAction={handleAction} />
-            <BuildingMenu state={state} />
           </div>
         </div>
+      </details>
 
-        <MissionLog state={state} language={language} />
-
-        <footer className="mt-8 flex flex-wrap items-center justify-between gap-2 border-t border-white/[0.05] pt-4 text-[10px] text-slate-600">
-          <span>{t.missionFooterLabel}</span>
-          <span>{state.baseName} · {t.operationCycle} {state.day}/{state.maxDays} · SEED {state.missionSeed.toString(16).padStart(8, '0')}</span>
-        </footer>
-      </div>
-
-      {notice ? <div role="status" className="fixed bottom-5 start-1/2 z-40 -translate-x-1/2 rounded-xl border border-emerald-200/15 bg-slate-900 px-4 py-3 text-sm text-emerald-100 shadow-2xl">{notice}</div> : null}
+      {notice ? <div role="status" className="fixed bottom-24 start-1/2 z-40 -translate-x-1/2 rounded-xl border border-emerald-200/15 bg-slate-900 px-4 py-3 text-sm text-emerald-100 shadow-2xl">{notice}</div> : null}
       {sleeping ? (
         <div className="sleep-sequence" role="status" aria-live="assertive" dir={isArabic ? 'rtl' : 'ltr'}>
           <p className="eyebrow">{t.crewRestCycle}</p>
@@ -327,7 +433,18 @@ export function GameScreen({ state }: { state: GameState }) {
         </div>
       ) : null}
       {state.activeEvent ? <EventModal /> : null}
+      {showEveningDebrief ? (
+        <EveningDebrief
+          state={state}
+          language={language}
+          queued={queuedDebriefDay === state.day}
+          onQueueReport={() => setQueuedDebriefDay(state.day)}
+          onAcknowledge={handleAcknowledgeDebrief}
+          onSleep={handleSleep}
+        />
+      ) : null}
       {schoolOpen ? <LearningAcademy onClose={() => setSchoolOpen(false)} /> : null}
+      {dataOriginsOpen ? <DataOriginsModal onClose={() => setDataOriginsOpen(false)} /> : null}
       {confirmEndMission ? (
         <div className="modal-backdrop" onMouseDown={(event) => {
           if (event.target === event.currentTarget) setConfirmEndMission(false)

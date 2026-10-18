@@ -67,3 +67,17 @@ test('records an early-ended mission distinctly from success and evacuation', ()
 
   assert.equal(getLeaderboard()[0].status, 'ended')
 })
+
+test('records an objective-incomplete return as a failure', () => {
+  memoryStorage.clear()
+  const state = {
+    ...initialGameState('mars', 6, 'Incomplete Objective'),
+    runId: 'incomplete-run',
+    isGameOver: true,
+    missionResult: 'failure' as const,
+  }
+
+  saveScore(state)
+
+  assert.equal(getLeaderboard()[0].status, 'failure')
+})

@@ -26,8 +26,9 @@ test('persists pause state, schedule, specialist mode, and an unresolved emergen
     memoryStorage.clear()
     const setup = {
       destination: 'mars' as const,
-      crewSize: 3,
-      maxDays: 30,
+      crewSize: 6,
+      maxDays: 180,
+      missionType: 'mars-conjunction' as const,
       difficulty: 'normal' as const,
       objective: 'science' as const,
       missionSeed: 91,
@@ -35,6 +36,9 @@ test('persists pause state, schedule, specialist mode, and an unresolved emergen
       missionMode: 'simulation' as const,
       controlMode: 'specialist' as const,
       controlledRole: 'water-officer' as const,
+      controlledDutyId: 'sabatier-isru-fuel-chemist-1',
+      astronautName: 'Mission Specialist',
+      astronautDutyId: 'space-agriculture-scientist-1',
     }
     saveMissionSetup(setup)
     assert.deepEqual(loadMissionSetup(), setup)
@@ -49,6 +53,12 @@ test('persists pause state, schedule, specialist mode, and an unresolved emergen
     eventHistory: [{ eventId: 'water-leak', choiceIndex: 0 }],
     controlMode: 'specialist',
     controlledRole: 'biologist',
+    crewDailyActivities: [{
+      dutyId: 'systems-engineer-1',
+      title: 'Systems Engineer',
+      action: 'maintenance',
+      effect: 'inspection',
+    }],
     missionPhase: 'return',
     transitDecisions: [
       { leg: 'outbound', choice: 'conservative' },
@@ -67,4 +77,24 @@ test('persists pause state, schedule, specialist mode, and an unresolved emergen
 
   deleteSave()
   assert.equal(hasSavedGame(), false)
+})
+
+test('persists a 180-day mission with a 12-person crew', () => {
+  memoryStorage.clear()
+  const setup = {
+    destination: 'mars' as const,
+    crewSize: 12,
+    maxDays: 180,
+    missionType: 'mars-conjunction' as const,
+    difficulty: 'hard' as const,
+    objective: 'survival' as const,
+    missionSeed: 204,
+    scenario: 'baseline' as const,
+    missionMode: 'simulation' as const,
+    controlMode: 'full' as const,
+    controlledRole: 'commander' as const,
+    controlledDutyId: 'commander-1',
+  }
+  saveMissionSetup(setup)
+  assert.deepEqual(loadMissionSetup(), setup)
 })

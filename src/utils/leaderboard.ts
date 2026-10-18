@@ -8,7 +8,7 @@ export interface LeaderboardEntry {
   runId: string
   day: number
   maxDays: number
-  status: 'success' | 'evacuation' | 'ended'
+  status: 'success' | 'failure' | 'evacuation' | 'ended'
   date: string
   score: number
   difficulty: MissionDifficulty
@@ -26,7 +26,7 @@ function isEntry(value: unknown): value is LeaderboardEntry {
   return typeof entry.runId === 'string' &&
     typeof entry.day === 'number' &&
     typeof entry.maxDays === 'number' &&
-    (entry.status === 'success' || entry.status === 'evacuation' || entry.status === 'ended') &&
+    (entry.status === 'success' || entry.status === 'failure' || entry.status === 'evacuation' || entry.status === 'ended') &&
     typeof entry.date === 'string' &&
     typeof entry.score === 'number' &&
     (entry.difficulty === 'easy' || entry.difficulty === 'normal' || entry.difficulty === 'hard') &&

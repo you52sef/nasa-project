@@ -333,7 +333,9 @@ button:not(:disabled):active { transform: scale(.985); }
 .map-baseline-scan { transform-origin: 405px 280px; animation: base-scan 5s ease-out infinite; }
 .map-survey-beacon { filter: drop-shadow(0 0 4px rgba(255,244,194,.9)); }
 .map-status-light { animation: status-pulse 2.8s ease-in-out infinite; }
-.map-habitat > circle:nth-of-type(2) { animation: habitat-signal 3s ease-in-out infinite; }
+.map-habitat > circle:last-of-type { animation: habitat-signal 3s ease-in-out infinite; }
+.map-radar-dish { transform-box: fill-box; transform-origin: 0 0; animation: radar-sweep 7s linear infinite; }
+.map-reactor-core { filter: drop-shadow(0 0 5px rgba(96,165,250,.95)); animation: reactor-pulse 2.2s ease-in-out infinite; }
 .base-map-surface [role=button] { cursor: pointer; transition: filter .2s ease; }
 .base-map-surface [role=button]:hover, .base-map-surface [role=button]:focus-visible { filter: drop-shadow(0 0 7px rgba(255,229,172,.8)); }
 .map-network-link path { fill: none; stroke: #67e8f9; stroke-width: 1.5; stroke-dasharray: 4 5; opacity: .8; animation: network-flow 1.5s linear infinite; }
@@ -349,6 +351,14 @@ button:not(:disabled):active { transform: scale(.985); }
 .mission-log-entry { display: flex; min-height: 2.55rem; align-items: center; gap: .7rem; border-bottom: 1px solid rgba(255,255,255,.035); animation: log-entry-in .25s ease-out both; }
 .mission-log-entry:last-child { border-bottom: 0; }
 .mission-log-icon { display: grid; height: 1.55rem; width: 1.55rem; flex: none; place-items: center; border: 1px solid rgba(255,255,255,.08); color: #a7f3d0; font-size: .72rem; }
+.mission-ticker { overflow: hidden; mask-image: linear-gradient(90deg, transparent, #000 4%, #000 96%, transparent); }
+.mission-ticker-track { display: flex; width: max-content; animation: mission-ticker-scroll 36s linear infinite; }
+.mission-ticker:hover .mission-ticker-track, .mission-ticker:focus-within .mission-ticker-track { animation-play-state: paused; }
+.mission-ticker-item { display: inline-flex; align-items: center; gap: .55rem; padding-inline-end: 2.5rem; color: #b8c6d5; font-size: .65rem; white-space: nowrap; }
+.mission-ticker-item i { color: #6ee7b7; font-size: .45rem; font-style: normal; }
+@keyframes mission-ticker-scroll { to { transform: translateX(-50%); } }
+:lang(ar) .mission-ticker-track { animation-name: mission-ticker-scroll-rtl; }
+@keyframes mission-ticker-scroll-rtl { to { transform: translateX(50%); } }
 .mission-launch-overlay {
   position: fixed;
   z-index: 100;
@@ -557,6 +567,8 @@ button:not(:disabled):active { transform: scale(.985); }
 @keyframes base-scan { 0% { opacity: .8; transform: scale(.55); } 85%, 100% { opacity: 0; transform: scale(2.6); } }
 @keyframes status-pulse { 0%, 100% { filter: brightness(.85); } 50% { filter: brightness(1.55); } }
 @keyframes habitat-signal { 0%, 100% { stroke-opacity: .25; } 50% { stroke-opacity: .8; } }
+@keyframes radar-sweep { to { transform: rotate(360deg); } }
+@keyframes reactor-pulse { 0%, 100% { opacity: .7; } 50% { opacity: 1; filter: drop-shadow(0 0 9px rgba(96,165,250,1)); } }
 @keyframes launch-scene-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes launch-caption-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes stars-slide { to { background-position: 0 280px, 23px 319px; } }
@@ -698,6 +710,170 @@ button:not(:disabled):active { transform: scale(.985); }
   .flight-page-layout { grid-template-columns: minmax(0,1.55fr) minmax(18rem,.75fr); align-items: stretch; }
   .flight-page .spacecraft-viewport { min-height: clamp(21rem, 46vh, 31rem); }
 }
+@media (prefers-reduced-motion: reduce) {
+  .mission-ticker-track { animation: none;   }
+}
+
+  .mission-command-screen {
+    position: relative;
+    display: flex;
+    width: 100%;
+    height: 100vh;
+    height: 100dvh;
+    min-height: 34rem;
+    flex-direction: column;
+    overflow: hidden;
+    padding: max(.75rem, env(safe-area-inset-top)) max(.85rem, env(safe-area-inset-right)) max(.75rem, env(safe-area-inset-bottom)) max(.85rem, env(safe-area-inset-left));
+    background-color: #071421;
+    background-image: radial-gradient(ellipse at 50% 0, rgba(19,92,118,.17), transparent 48rem), linear-gradient(120deg, rgba(4,12,22,.97), rgba(6,19,31,.93));
+  }
+  .mission-command-header {
+    position: relative;
+    z-index: 40;
+    display: grid;
+    grid-template-columns: minmax(12rem, 1fr) minmax(15rem, 2.1fr) minmax(15rem, 1.35fr);
+    align-items: center;
+    gap: .75rem;
+    min-height: 4.25rem;
+    flex: none;
+    border: 1px solid rgba(112,205,226,.2);
+    border-radius: 1rem;
+    background: linear-gradient(110deg, rgba(8,28,43,.88), rgba(6,20,33,.73));
+    padding: .45rem .65rem;
+    box-shadow: 0 8px 30px rgba(0,0,0,.2), inset 0 1px rgba(255,255,255,.045);
+    backdrop-filter: blur(18px);
+  }
+  .mission-command-clock { display: flex; min-width: 0; align-items: center; gap: .6rem; }
+  .mission-command-destination { display: grid; width: 2.55rem; height: 2.55rem; flex: none; place-items: center; border: 1px solid rgba(103,232,249,.22); border-radius: .8rem; background: rgba(103,232,249,.07); font-size: 1.2rem; }
+  .mission-command-clock h1 { overflow: hidden; max-width: 12rem; color: #effaff; font-size: .8rem; font-weight: 900; text-overflow: ellipsis; white-space: nowrap; }
+  .mission-command-clock p { display: flex; align-items: center; gap: .3rem; margin-top: .25rem; color: #a7c1d0; font: 700 .62rem 'IBM Plex Mono', 'IBM Plex Sans Arabic', monospace; }
+  .mission-command-clock p svg { color: #67e8f9; }
+  .mission-daylight-indicator { display: flex; flex: none; align-items: center; gap: .3rem; color: #b9d0dc; font-size: .58rem; font-weight: 800; text-transform: capitalize; }
+  .mission-daylight-indicator i { width: .42rem; height: .42rem; border-radius: 50%; background: #fbbf24; box-shadow: 0 0 9px rgba(251,191,36,.55); }
+  .mission-daylight-indicator.is-night i { background: #818cf8; box-shadow: 0 0 9px rgba(129,140,248,.55); }
+  .mission-command-ticker { min-width: 0; overflow: hidden; }
+  .mission-command-ticker .mission-log { margin-top: 0; border-color: rgba(103,232,249,.12); border-radius: .7rem; background: rgba(2,10,19,.45); box-shadow: none; }
+  .mission-command-ticker .mission-log > div:first-child { border-bottom: 0; padding: .5rem .65rem; }
+  .mission-command-ticker .mission-log > button { display: none; }
+  .mission-command-ticker .mission-ticker-item { font-size: .62rem; }
+  .mission-command-actions { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: .45rem; }
+  .mission-signal-readout { display: flex; align-items: center; gap: .35rem; border: 1px solid rgba(103,232,249,.16); border-radius: .65rem; background: rgba(103,232,249,.045); padding: .5rem .55rem; color: #b8dbe8; font: 700 .58rem 'IBM Plex Mono', 'IBM Plex Sans Arabic', monospace; white-space: nowrap; }
+  .mission-signal-readout svg { color: #67e8f9; }
+  .mission-report-send { display: flex; min-height: 2.2rem; align-items: center; justify-content: center; gap: .35rem; border: 1px solid rgba(52,211,153,.25); border-radius: .65rem; background: rgba(16,185,129,.08); padding: .4rem .6rem; color: #a7f3d0; font-size: .62rem; font-weight: 800; white-space: nowrap; transition: background .18s ease, border-color .18s ease; }
+  .mission-report-send:hover:not(:disabled) { border-color: rgba(52,211,153,.6); background: rgba(16,185,129,.16); }
+  .mission-report-send:disabled { cursor: not-allowed; opacity: .45; }
+  .mission-command-actions > .mission-menu { flex: none; }
+  .mission-command-actions > .mission-menu > summary { display: grid; width: 2.35rem; height: 2.35rem; place-items: center; border: 1px solid rgba(148,163,184,.18); border-radius: .65rem; color: #cbd5e1; cursor: pointer; list-style: none; }
+  .mission-command-actions > .mission-menu > summary::-webkit-details-marker { display: none; }
+  .mission-command-actions > .mission-menu > summary span { display: none; }
+  .mission-command-actions > .mission-menu .mission-menu-panel { right: 0; left: auto; max-height: min(75vh, 42rem); overflow: auto; }
+  .mission-command-map-stage { position: relative; min-height: 0; flex: 1; margin-top: .75rem; }
+  .mission-command-map-wrap { position: absolute; inset: 0; min-height: 0; }
+  .mission-command-map { height: 100%; border-color: rgba(125,211,252,.2); border-radius: 1rem; box-shadow: 0 18px 55px rgba(0,0,0,.25); }
+  .mission-command-map .base-map-surface { border-radius: .95rem .95rem 0 0; }
+  .mission-command-map .base-map-surface > svg { height: 100%; }
+  .mission-command-map > div:last-child { flex: none; }
+  .mission-command-map .base-map-surface > div.absolute.inset-x-0.bottom-0 { padding-bottom: 1.25rem; }
+  .mission-objective-chip { position: absolute; z-index: 22; top: .8rem; left: 50%; display: grid; width: min(24rem, calc(100% - 7rem)); gap: .3rem; border: 1px solid rgba(196,181,253,.2); border-radius: .75rem; background: rgba(4,15,28,.76); padding: .55rem .75rem; color: #e9ddff; font-size: .62rem; font-weight: 800; text-align: center; transform: translateX(-50%); backdrop-filter: blur(12px); }
+  .mission-objective-chip > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .mission-objective-chip > span:nth-child(2) { color: #aebdc9; font: 700 .55rem 'IBM Plex Mono', 'IBM Plex Sans Arabic', monospace; }
+  .mission-objective-chip > i { height: .2rem; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.12); }
+  .mission-objective-chip > i b { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg,#a78bfa,#67e8f9); transition: width .35s ease; }
+  .mission-critical-strip { position: absolute; z-index: 22; top: .8rem; right: .8rem; display: flex; max-width: min(23rem, 33%); flex-wrap: wrap; justify-content: flex-end; gap: .3rem; border: 1px solid rgba(251,113,133,.25); border-radius: .75rem; background: rgba(50,12,24,.72); padding: .55rem; backdrop-filter: blur(10px); }
+  .mission-critical-strip strong { width: 100%; color: #fecdd3; font-size: .6rem; }
+  .mission-critical-strip span { border-radius: .45rem; background: rgba(255,255,255,.06); padding: .25rem .4rem; color: #ffe4e6; font-size: .55rem; }
+  .mission-side-rail { position: absolute; z-index: 31; inset-block: 50% auto; inset-inline-start: .85rem; display: flex; flex-direction: column; gap: .45rem; transform: translateY(-50%); }
+  .mission-side-rail-button { position: relative; display: grid; width: 3.05rem; min-height: 3.05rem; place-items: center; border: 1px solid rgba(145,205,224,.26); border-radius: .85rem; background: rgba(3,18,31,.82); color: #c5e5ee; box-shadow: 0 6px 18px rgba(0,0,0,.18); backdrop-filter: blur(12px); cursor: pointer; transition: color .16s ease, border-color .16s ease, background .16s ease, transform .16s ease; }
+  .mission-side-rail-button > span { position: absolute; inset-inline-start: calc(100% + .55rem); border: 1px solid rgba(103,232,249,.2); border-radius: .45rem; background: #071b2b; padding: .35rem .5rem; color: #e0f7ff; font-size: .62rem; font-weight: 800; white-space: nowrap; opacity: 0; pointer-events: none; transform: translateX(-.2rem); transition: opacity .16s ease, transform .16s ease; }
+  .mission-side-rail-button:hover > span, .mission-side-rail-button:focus-visible > span { opacity: 1; transform: translateX(0); }
+  .mission-side-rail-button:hover, .mission-side-rail-button[aria-pressed="true"] { border-color: rgba(103,232,249,.64); background: rgba(8,47,73,.92); color: #a5f3fc; transform: translateY(-1px); }
+  .mission-rail-alert { position: absolute; top: .35rem; right: .35rem; width: .48rem; height: .48rem; border: 1px solid #0b1725; border-radius: 50%; background: #fb7185; box-shadow: 0 0 8px rgba(251,113,133,.7); }
+  .mission-side-drawer { position: absolute; z-index: 30; inset-block: .75rem .75rem; inset-inline-start: 4.35rem; display: flex; width: min(27rem, calc(100vw - 6rem)); min-height: 0; flex-direction: column; border: 1px solid rgba(103,232,249,.24); border-radius: 1rem; background: rgba(5,18,31,.93); box-shadow: 0 18px 55px rgba(0,0,0,.38); backdrop-filter: blur(20px); animation: mission-drawer-in .22s cubic-bezier(.2,.75,.2,1) both; }
+  .mission-side-drawer > header { display: flex; flex: none; align-items: center; justify-content: space-between; gap: .75rem; border-bottom: 1px solid rgba(103,232,249,.14); padding: .9rem 1rem; }
+  .mission-side-drawer > header p { color: #67e8f9; font-size: .55rem; font-weight: 900; letter-spacing: .12em; }
+  .mission-side-drawer > header h2 { margin-top: .2rem; color: #f1faff; font-size: .95rem; font-weight: 900; }
+  .mission-side-drawer > header button { display: grid; width: 2.2rem; height: 2.2rem; flex: none; place-items: center; border: 1px solid rgba(148,163,184,.2); border-radius: .65rem; background: rgba(255,255,255,.04); color: #cbd5e1; cursor: pointer; }
+  .mission-side-drawer-content { min-height: 0; flex: 1; overflow: auto; overscroll-behavior: contain; padding: .85rem; }
+  .mission-side-drawer-content > section, .mission-side-drawer-content .glass-panel { background-color: rgba(8,28,44,.78); }
+  .mission-side-drawer-content .resource-attention { margin-bottom: 0; }
+  .mission-side-drawer-content .resource-attention,
+  .mission-side-drawer-content .mission-detail-disclosure { border-radius: .75rem; }
+  .mission-routine-dock { position: absolute; z-index: 33; right: max(1rem, env(safe-area-inset-right)); bottom: max(.75rem, env(safe-area-inset-bottom)); left: max(1rem, env(safe-area-inset-left)); width: min(56rem, calc(100% - 2rem)); margin-inline: auto; border: 1px solid rgba(103,232,249,.22); border-radius: .95rem; background: rgba(4,17,29,.89); box-shadow: 0 12px 38px rgba(0,0,0,.28); backdrop-filter: blur(17px); }
+  .mission-routine-dock > summary { display: flex; min-height: 3.25rem; align-items: center; gap: .7rem; padding: .55rem .85rem; color: #e2f7fb; cursor: pointer; list-style: none; }
+  .mission-routine-dock > summary::-webkit-details-marker { display: none; }
+  .mission-routine-icon { display: grid; width: 2rem; height: 2rem; flex: none; place-items: center; border: 1px solid rgba(103,232,249,.2); border-radius: .6rem; background: rgba(103,232,249,.08); color: #67e8f9; }
+  .mission-routine-title { overflow: hidden; flex: 1; font-size: .7rem; font-weight: 900; text-overflow: ellipsis; white-space: nowrap; }
+  .mission-routine-time { color: #c7d8e2; font: 800 .68rem 'IBM Plex Mono', monospace; }
+  .mission-routine-status { border: 1px solid rgba(251,191,36,.2); border-radius: 999px; background: rgba(251,191,36,.05); padding: .25rem .45rem; color: #fde68a; font-size: .56rem; font-weight: 800; white-space: nowrap; }
+  .mission-routine-status.is-done { border-color: rgba(74,222,128,.22); background: rgba(74,222,128,.07); color: #bbf7d0; }
+  .mission-routine-chevron { color: #7dd3fc; font-size: 1rem; transition: transform .2s ease; }
+  .mission-routine-dock[open] .mission-routine-chevron { transform: rotate(180deg); }
+  .mission-routine-body { border-top: 1px solid rgba(103,232,249,.12); padding: .8rem .9rem .9rem; animation: routine-panel-in .2s ease both; }
+  .mission-routine-progress { height: .22rem; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.08); }
+  .mission-routine-progress span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg,#22d3ee,#a78bfa); transition: width .35s ease; }
+  .mission-routine-body ol { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: .4rem; max-height: min(28vh, 13rem); overflow-y: auto; margin-top: .65rem; }
+  .mission-routine-body li { display: flex; min-width: 0; align-items: center; gap: .4rem; border: 1px solid rgba(148,163,184,.1); border-radius: .55rem; background: rgba(255,255,255,.025); padding: .45rem .5rem; color: #94a3b8; font-size: .57rem; }
+  .mission-routine-body li.is-mandatory { border-color: rgba(251,191,36,.16); color: #fde68a; }
+  .mission-routine-body li.is-done { border-color: rgba(74,222,128,.17); color: #bbf7d0; }
+  .mission-routine-body li b { overflow: hidden; flex: 1; font-weight: 600; text-overflow: ellipsis; }
+  .mission-routine-body li small { flex: none; color: #94a3b8; font: 700 .53rem 'IBM Plex Mono', monospace; }
+  .mission-routine-actions { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin-top: .65rem; }
+  .mission-routine-actions > p { color: #a7bdc8; font-size: .6rem; }
+  .mission-routine-actions > p b { color: white; }
+  .mission-routine-actions > div { display: flex; flex: none; gap: .45rem; }
+  @keyframes mission-drawer-in { from { opacity: .5; transform: translateX(-.6rem); } to { opacity: 1; transform: translateX(0); } }
+  @keyframes routine-panel-in { from { opacity: .35; transform: translateY(.3rem); } to { opacity: 1; transform: translateY(0); } }
+
+  @media (max-width: 980px) {
+    .mission-command-header { grid-template-columns: minmax(11rem,1fr) minmax(12rem,1.5fr); }
+    .mission-command-ticker { grid-column: 1 / -1; grid-row: 2; }
+    .mission-command-actions { grid-column: 2; grid-row: 1; }
+    .mission-command-map-stage { margin-top: .5rem; }
+    .mission-objective-chip { top: .55rem; }
+  }
+  @media (max-width: 640px) {
+    .mission-command-screen { min-height: 0; padding: max(.4rem,env(safe-area-inset-top)) max(.4rem,env(safe-area-inset-right)) max(.4rem,env(safe-area-inset-bottom)) max(.4rem,env(safe-area-inset-left)); }
+    .mission-command-header { grid-template-columns: minmax(0,1fr) auto; gap: .35rem; min-height: auto; border-radius: .75rem; padding: .4rem; }
+    .mission-command-clock { gap: .4rem; }
+    .mission-command-destination { width: 2rem; height: 2rem; border-radius: .6rem; font-size: 1rem; }
+    .mission-command-clock h1 { max-width: 8rem; font-size: .68rem; }
+    .mission-command-clock p { font-size: .54rem; }
+    .mission-daylight-indicator { font-size: .5rem; }
+    .mission-command-ticker { grid-column: 1 / -1; grid-row: 2; }
+    .mission-command-ticker .mission-log > div:first-child { padding: .35rem .45rem; }
+    .mission-command-ticker .mission-log .eyebrow { font-size: .5rem; }
+    .mission-command-ticker .mission-ticker-item { font-size: .55rem; }
+    .mission-command-actions { grid-column: 2; grid-row: 1; gap: .3rem; }
+    .mission-signal-readout { gap: .2rem; padding: .4rem; font-size: .48rem; }
+    .mission-signal-readout svg { width: 12px; }
+    .mission-report-send { min-height: 2rem; gap: .2rem; padding: .35rem .4rem; font-size: .52rem; }
+    .mission-report-send svg { width: 12px; }
+    .mission-command-actions > .mission-menu > summary { width: 2rem; height: 2rem; }
+    .mission-side-rail { inset-inline-start: .4rem; gap: .35rem; }
+    .mission-side-rail-button { width: 2.55rem; min-height: 2.55rem; border-radius: .7rem; }
+    .mission-side-rail-button svg { width: 17px; }
+    .mission-side-rail-button > span { display: none; }
+    .mission-side-drawer { inset-block: .45rem .45rem; inset-inline-start: 3.35rem; width: calc(100vw - 4rem); border-radius: .8rem; }
+    .mission-side-drawer-content { padding: .55rem; }
+    .mission-objective-chip { top: .45rem; width: min(15rem, calc(100% - 6rem)); padding: .4rem .5rem; font-size: .54rem; }
+    .mission-objective-chip > span:nth-child(2) { font-size: .49rem; }
+    .mission-critical-strip { top: auto; right: .45rem; bottom: 4rem; max-width: 45%; padding: .4rem; }
+    .mission-critical-strip strong { font-size: .52rem; }
+    .mission-critical-strip span { font-size: .48rem; }
+    .mission-routine-dock { right: .4rem; bottom: max(.4rem,env(safe-area-inset-bottom)); left: .4rem; width: auto; border-radius: .75rem; }
+    .mission-routine-dock > summary { min-height: 2.8rem; gap: .4rem; padding: .4rem .5rem; }
+    .mission-routine-icon { width: 1.8rem; height: 1.8rem; }
+    .mission-routine-title { font-size: .58rem; }
+    .mission-routine-status { padding: .2rem .32rem; font-size: .48rem; }
+    .mission-routine-time { font-size: .57rem; }
+    .mission-routine-body { padding: .6rem; }
+    .mission-routine-body ol { grid-template-columns: repeat(2,minmax(0,1fr)); max-height: 24vh; }
+    .mission-routine-actions { align-items: flex-start; flex-direction: column; }
+    .mission-routine-actions > div { width: 100%; justify-content: flex-end; flex-wrap: wrap; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .mission-side-drawer, .mission-routine-body { animation: none; }
+  }
 @media (prefers-reduced-motion: reduce) {
   .sleep-sequence,
   .sleep-habitat,
@@ -932,4 +1108,652 @@ body {
   .mission-start-copy { min-height: 0; }
   .mission-start-copy > div:last-of-type { margin-block: 1rem; }
   .mission-start .mission-orbit-scene { height: 10rem; }
+}
+
+.flight-page {
+  z-index: 120;
+  width: auto;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+.flight-fullscreen-space {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  isolation: isolate;
+}
+.flight-fullscreen-space .spacecraft-viewport-stars { position: absolute; }
+.flight-fullscreen-space .spacecraft-viewport-planet {
+  top: 11%;
+  right: 12%;
+  width: clamp(11rem, 34vw, 34rem);
+}
+.flight-fullscreen-space .spacecraft-viewport-horizon {
+  bottom: -48%;
+  height: 65%;
+}
+.flight-fullscreen-space .spacecraft-viewport-reticle,
+.flight-fullscreen-space .spacecraft-viewport-vehicle { display: none !important; }
+.flight-scene-hud {
+  position: absolute;
+  z-index: 8;
+  top: max(1.25rem, env(safe-area-inset-top));
+  right: max(1.5rem, env(safe-area-inset-right));
+  left: max(1.5rem, env(safe-area-inset-left));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border-bottom: 1px solid rgba(165,243,252,.25);
+  padding: .75rem 0;
+  color: #d6f8ff;
+  font: 700 clamp(.62rem, 1vw, .86rem) 'IBM Plex Mono', 'IBM Plex Sans Arabic', monospace;
+  letter-spacing: .05em;
+  text-shadow: 0 1px 12px #020617;
+}
+.flight-scene-hud span:nth-child(2) {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: #f8fafc;
+  font-family: 'IBM Plex Sans Arabic', sans-serif;
+  letter-spacing: 0;
+  text-align: center;
+}
+.flight-scene-hud > span { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.flight-scene-hud span:last-child { color: #9eb5c7; }
+.flight-scene-hud b { color: #67e8f9; }
+.flight-day-counter {
+  position: absolute;
+  z-index: 8;
+  top: clamp(5rem, 10vh, 7rem);
+  left: max(1.5rem, env(safe-area-inset-left));
+  display: grid;
+  min-width: 10rem;
+  gap: .25rem;
+  border: 1px solid rgba(103,232,249,.38);
+  border-radius: .85rem;
+  background: rgba(2,10,22,.76);
+  padding: .8rem 1rem;
+  box-shadow: 0 10px 36px rgba(0,0,0,.26), inset 0 1px rgba(255,255,255,.06);
+  backdrop-filter: blur(12px);
+}
+.flight-hud-label { color: #9bb3c5; font-size: .62rem; font-weight: 800; letter-spacing: .12em; }
+.flight-day-counter > strong { color: #f0fdff; font: 800 clamp(1.5rem, 3vw, 2.25rem) 'IBM Plex Mono', monospace; }
+.flight-day-counter > strong span { color: #86a8bc; font-size: .85em; }
+.flight-day-mission { display: flex; align-items: center; justify-content: space-between; gap: .75rem; color: #67e8f9; font-size: .65rem; font-weight: 800; }
+.flight-day-mission b { color: #e0f2fe; font: 800 .72rem 'IBM Plex Mono', monospace; }
+.flight-day-remaining { margin-top: .25rem; color: #a8b8c8; font-size: .65rem; }
+.flight-day-remaining b { color: #fef3c7; }
+.flight-side-control {
+  position: absolute;
+  z-index: 12;
+  top: 50%;
+  display: grid;
+  justify-items: center;
+  gap: .5rem;
+  transform: translateY(-50%);
+}
+.flight-speed-control { left: max(1.5rem, env(safe-area-inset-left)); }
+.flight-performance-control { right: max(1.5rem, env(safe-area-inset-right)); }
+.flight-round-button {
+  display: grid;
+  width: clamp(4rem, 7vw, 5.25rem);
+  height: clamp(4rem, 7vw, 5.25rem);
+  place-items: center;
+  gap: .05rem;
+  border: 1px solid rgba(125,211,252,.65);
+  border-radius: 50%;
+  background: rgba(4,20,37,.78);
+  color: #c9f6ff;
+  box-shadow: 0 0 0 5px rgba(8,47,73,.3), 0 0 26px rgba(34,211,238,.18), inset 0 1px rgba(255,255,255,.14);
+  backdrop-filter: blur(10px);
+  cursor: pointer;
+  transition: transform .18s ease, background .18s ease, box-shadow .18s ease;
+}
+.flight-round-button:hover,
+.flight-round-button[aria-expanded="true"] {
+  transform: scale(1.07);
+  background: rgba(8,47,73,.96);
+  box-shadow: 0 0 0 6px rgba(8,47,73,.38), 0 0 34px rgba(34,211,238,.3), inset 0 1px rgba(255,255,255,.2);
+}
+.flight-round-button span { color: #fef3c7; font: 800 .8rem 'IBM Plex Mono', monospace; }
+.flight-control-caption { max-width: 8rem; color: #c5d6e2; font-size: .68rem; font-weight: 800; text-align: center; text-shadow: 0 1px 8px #020617; }
+.flight-control-menu {
+  position: absolute;
+  top: 50%;
+  left: calc(100% + 1rem);
+  display: grid;
+  min-width: 7rem;
+  gap: .35rem;
+  border: 1px solid rgba(103,232,249,.34);
+  border-radius: .75rem;
+  background: rgba(3,14,28,.94);
+  padding: .45rem;
+  box-shadow: 0 14px 38px rgba(0,0,0,.5);
+  backdrop-filter: blur(14px);
+  transform: translateY(-50%);
+}
+.flight-performance-menu { right: calc(100% + 1rem); left: auto; min-width: min(19rem, 38vw); }
+.flight-control-menu button {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  border: 1px solid transparent;
+  border-radius: .5rem;
+  background: rgba(255,255,255,.04);
+  padding: .65rem .75rem;
+  color: #e2f5fc;
+  font-size: .78rem;
+  font-weight: 800;
+  text-align: start;
+  cursor: pointer;
+}
+.flight-control-menu button:hover,
+.flight-control-menu button[aria-pressed="true"] { border-color: rgba(103,232,249,.44); background: rgba(34,211,238,.11); }
+.flight-performance-menu button span { display: grid; gap: .25rem; }
+.flight-performance-menu small { color: #a0b4c3; font-size: .62rem; font-weight: 400; line-height: 1.5; }
+.flight-progress-hud {
+  position: absolute;
+  z-index: 9;
+  right: max(1.5rem, env(safe-area-inset-right));
+  bottom: max(1.5rem, env(safe-area-inset-bottom));
+  left: max(1.5rem, env(safe-area-inset-left));
+  display: grid;
+  gap: .55rem;
+  border: 1px solid rgba(148,218,239,.2);
+  border-radius: .8rem;
+  background: rgba(2,10,22,.72);
+  padding: .8rem 1rem;
+  backdrop-filter: blur(10px);
+}
+.flight-progress-heading { display: flex; align-items: center; justify-content: space-between; color: #d9eff6; font-size: .75rem; font-weight: 800; }
+.flight-progress-heading strong { color: #a5f3fc; font: 800 1rem 'IBM Plex Mono', monospace; }
+.flight-progress-hud .flight-progress-track { position: static; width: 100%; height: .65rem; border: 1px solid rgba(165,243,252,.2); background: rgba(255,255,255,.12); }
+.flight-progress-track span { background: linear-gradient(90deg, #35c4cf, #a5f3fc 58%, #fef3c7); }
+.flight-scene-caption { bottom: 5.4rem; font-size: clamp(.9rem, 2vw, 1.25rem); }
+.flight-begin-button { display: none; }
+
+.astronaut-profile-trigger {
+  position: relative;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  flex: none;
+  max-width: min(17rem, calc(100vw - 2rem));
+  gap: .55rem;
+  border: 1px solid rgba(103,232,249,.4);
+  border-radius: 999px;
+  background: rgba(2,10,22,.9);
+  padding: .55rem .8rem;
+  color: #dbeafe;
+  box-shadow: 0 8px 28px rgba(0,0,0,.28);
+  backdrop-filter: blur(12px);
+  cursor: pointer;
+}
+.astronaut-profile-trigger:hover { border-color: rgba(103,232,249,.8); background: rgba(3,18,34,.98); }
+.astronaut-profile-trigger > span { overflow: hidden; font-size: .72rem; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+.astronaut-profile-trigger > strong { color: #a5f3fc; font: 800 .75rem 'IBM Plex Mono', monospace; }
+.astronaut-profile-trigger-flight { position: fixed; top: max(4.75rem, calc(env(safe-area-inset-top) + 3.5rem)); right: max(1rem, env(safe-area-inset-right)); z-index: 35; }
+.astronaut-profile-backdrop {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(1,7,16,.72);
+  backdrop-filter: blur(5px);
+  animation: astronaut-drawer-backdrop .2s ease-out both;
+  overscroll-behavior: contain;
+}
+.astronaut-profile-backdrop.is-closing { animation: astronaut-drawer-backdrop-out .28s ease-in both; }
+.astronaut-profile-backdrop.is-rtl { justify-content: flex-start; }
+.astronaut-profile-drawer {
+  display: flex;
+  width: clamp(23.75rem, 30vw, 28.125rem);
+  max-width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-inline-start: 1px solid rgba(103,232,249,.25);
+  background: linear-gradient(165deg, #0b1b2c, #07111f 72%);
+  padding: max(1.25rem, env(safe-area-inset-top)) 1.25rem max(1.25rem, env(safe-area-inset-bottom));
+  color: #e2e8f0;
+  box-shadow: -18px 0 55px rgba(0,0,0,.4);
+  animation: astronaut-drawer-in .28s cubic-bezier(.2,.75,.2,1) both;
+}
+.astronaut-profile-backdrop.is-closing .astronaut-profile-drawer { animation: astronaut-drawer-out .28s ease-in both; }
+.astronaut-profile-backdrop.is-rtl .astronaut-profile-drawer { border-inline-start: 0; border-inline-end: 1px solid rgba(103,232,249,.25); box-shadow: 18px 0 55px rgba(0,0,0,.4); animation-name: astronaut-drawer-in-rtl; }
+.astronaut-profile-backdrop.is-rtl.is-closing .astronaut-profile-drawer { animation-name: astronaut-drawer-out-rtl; }
+.astronaut-profile-drawer-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; border-bottom: 1px solid rgba(148,163,184,.16); padding-bottom: 1rem; }
+.astronaut-profile-identity { display: flex; min-width: 0; align-items: center; gap: .9rem; }
+.astronaut-profile-avatar { display: grid; width: 3.25rem; height: 3.25rem; flex: none; place-items: center; border: 1px solid rgba(103,232,249,.35); border-radius: 50%; background: radial-gradient(circle at 35% 25%, rgba(103,232,249,.24), rgba(8,47,73,.35)); color: #a5f3fc; box-shadow: inset 0 1px rgba(255,255,255,.12), 0 0 24px rgba(34,211,238,.12); }
+.astronaut-profile-eyebrow { color: #67e8f9; font-size: .65rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
+.astronaut-profile-drawer-heading h2 { margin-top: .35rem; color: white; font-size: 1.35rem; font-weight: 900; }
+.astronaut-profile-role { margin-top: .2rem; color: #fcd34d; font-size: .78rem; font-weight: 700; }
+.astronaut-profile-close { display: grid; width: 2.5rem; height: 2.5rem; flex: none; place-items: center; border: 1px solid rgba(148,163,184,.24); border-radius: .75rem; background: rgba(255,255,255,.05); color: #e2e8f0; cursor: pointer; }
+.astronaut-profile-close:hover { background: rgba(255,255,255,.12); }
+.astronaut-profile-drawer-body { display: grid; gap: 1rem; padding-top: 1rem; }
+.astronaut-profile-card { border: 1px solid rgba(103,232,249,.16); border-radius: .9rem; background: rgba(255,255,255,.035); padding: 1rem; }
+.astronaut-profile-card h3 { color: #94a3b8; font-size: .68rem; font-weight: 800; text-transform: uppercase; letter-spacing: .07em; }
+.astronaut-profile-card > p { margin-top: .35rem; color: #f1f5f9; font-size: .9rem; font-weight: 700; }
+.astronaut-profile-progress-heading { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.astronaut-profile-progress-heading strong { color: #a5f3fc; font: 800 .78rem 'IBM Plex Mono', monospace; }
+.astronaut-profile-task-list { display: grid; gap: .65rem; margin-top: 1rem; }
+.astronaut-profile-task-list li { display: flex; align-items: flex-start; gap: .65rem; color: #cbd5e1; font-size: .78rem; line-height: 1.5; }
+.astronaut-profile-task-list li.is-complete { color: #bbf7d0; }
+.astronaut-profile-task-check { display: grid; width: 1.25rem; height: 1.25rem; flex: none; place-items: center; border: 1px solid rgba(148,163,184,.32); border-radius: 50%; color: #94a3b8; font-size: .72rem; }
+.astronaut-profile-task-list li.is-complete .astronaut-profile-task-check { border-color: rgba(74,222,128,.4); background: rgba(74,222,128,.12); color: #86efac; }
+.astronaut-profile-status { margin-top: .75rem; color: #fcd34d; font-size: .7rem; }
+.astronaut-profile-status.is-complete { color: #86efac; }
+.mission-plan-card { overflow: hidden; }
+.mission-plan-toggle { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem; text-align: start; cursor: pointer; }
+.mission-plan-toggle:hover { background: rgba(103,232,249,.04); }
+.mission-plan-toggle-label { display: flex; flex: none; align-items: center; gap: .35rem; color: #a5f3fc; font-size: .65rem; font-weight: 800; }
+.mission-plan-toggle-label svg { transition: transform .25s ease; }
+.mission-plan-toggle[aria-expanded="true"] .mission-plan-toggle-label svg { transform: rotate(180deg); }
+.mission-plan-disclosure { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .3s ease; }
+.mission-plan-disclosure.is-expanded { grid-template-rows: 1fr; }
+.mission-plan-disclosure-inner { min-height: 0; overflow: hidden; }
+.astronaut-profile-track { height: .3rem; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.12); }
+.astronaut-profile-track span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg,#35c4cf,#a5f3fc); transition: width .3s ease; }
+.flight-scene-caption { z-index: 8; top: 50%; right: 1rem; bottom: auto; left: 1rem; width: min(calc(100% - 2rem), 34rem); margin-inline: auto; border: 1px solid rgba(165,243,252,.2); border-radius: .75rem; background: rgba(2,10,22,.72); padding: .75rem 1rem; font-size: clamp(.9rem, 2vw, 1.25rem); transform: translateY(3rem); }
+.mission-appreciation-backdrop { z-index: 70; background: radial-gradient(circle at 50% 36%, rgba(16,185,129,.13), transparent 24rem), rgba(2,5,12,.84); }
+.mission-appreciation-card { border-color: rgba(110,231,183,.3); box-shadow: 0 0 0 1px rgba(110,231,183,.08), 0 32px 100px rgba(0,0,0,.65), 0 0 80px rgba(16,185,129,.12); animation: appreciation-arrive .7s cubic-bezier(.18,.8,.24,1) both; }
+@keyframes appreciation-arrive { from { opacity: 0; transform: translateY(1.5rem) scale(.94); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+@media (max-width: 640px) {
+  .astronaut-profile-trigger { max-width: min(13rem, calc(100vw - 1.5rem)); padding: .5rem .65rem; }
+  .astronaut-profile-trigger-flight { top: max(4rem, calc(env(safe-area-inset-top) + 3rem)); }
+  .astronaut-profile-drawer { width: 100vw; max-width: 100vw; padding-inline: 1rem; }
+  .flight-scene-caption { top: 52%; padding: .6rem .75rem; transform: translateY(2rem); }
+}
+
+@media (max-width: 640px) {
+  .flight-scene-hud { top: max(.65rem, env(safe-area-inset-top)); right: .75rem; left: .75rem; flex-wrap: wrap; gap: .45rem .8rem; padding-block: .5rem; font-size: .56rem; }
+  .flight-scene-hud span:nth-child(2) { order: 3; width: 100%; line-height: 1.4; }
+  .flight-scene-hud span:last-child { max-width: 65%; margin-inline-start: auto; text-align: end; overflow-wrap: anywhere; }
+  .flight-fullscreen-space .spacecraft-viewport-planet { top: 19%; right: 12%; width: clamp(10rem, 48vw, 17rem); }
+  .flight-day-counter { top: 6.25rem; left: .75rem; min-width: 8.75rem; gap: .15rem; padding: .55rem .7rem; }
+  .flight-hud-label { font-size: .52rem; }
+  .flight-day-counter > strong { font-size: 1.35rem; }
+  .flight-day-mission, .flight-day-remaining { font-size: .55rem; }
+  .flight-side-control { top: auto; bottom: 5.7rem; gap: .35rem; }
+  .flight-speed-control { left: .9rem; }
+  .flight-performance-control { right: .9rem; }
+  .flight-round-button { width: 3.5rem; height: 3.5rem; }
+  .flight-control-caption { max-width: 6.25rem; font-size: .57rem; }
+  .flight-control-menu { top: auto; bottom: 0; left: calc(100% + .55rem); transform: none; }
+  .flight-performance-menu { right: calc(100% + .55rem); left: auto; min-width: min(15rem, 54vw); }
+  .flight-progress-hud { right: .75rem; bottom: max(.65rem, env(safe-area-inset-bottom)); left: .75rem; padding: .6rem .7rem; }
+  .flight-progress-hud .flight-progress-track { height: .55rem; }
+}
+
+.flight-transition-vehicle {
+  position: absolute;
+  z-index: 7;
+  left: 50%;
+  display: grid;
+  justify-items: center;
+  color: #e0f8ff;
+  filter: drop-shadow(0 0 18px rgba(125,211,252,.8));
+}
+.flight-transition-vehicle > svg { transform: rotate(-45deg); }
+.flight-transition-launch { top: 68%; transform: translate(-50%,-50%); animation: vehicle-liftoff 5.5s cubic-bezier(.48,.02,.82,.16) both; }
+.flight-engine-plume {
+  position: absolute;
+  z-index: 6;
+  left: 50%;
+  width: clamp(1.3rem, 3vw, 2.5rem);
+  border-radius: 48% 48% 65% 65%;
+  filter: blur(5px);
+  pointer-events: none;
+}
+.flight-engine-plume-launch {
+  top: 72%;
+  height: 23vh;
+  background: linear-gradient(180deg, #fff5c2 0%, #ffc45f 24%, #f97316 52%, rgba(239,68,68,0) 100%);
+  transform: translateX(-50%);
+  transform-origin: top;
+  animation: exhaust-liftoff 5.5s cubic-bezier(.48,.02,.82,.16) both;
+}
+.flight-thruster {
+  position: absolute;
+  top: 70%;
+  width: 1.6rem;
+  height: 2.2rem;
+  border-radius: 50%;
+  background: #fde68a;
+  filter: blur(8px);
+  opacity: .9;
+}
+.flight-transition-landing { top: -15%; transform: translateX(-50%); animation: vehicle-descent 5.5s cubic-bezier(.18,.7,.25,1) both; }
+.flight-engine-plume-landing {
+  top: -8%;
+  height: 18vh;
+  transform: translateX(-50%);
+  transform-origin: top;
+  animation: exhaust-descent 5.5s cubic-bezier(.18,.7,.25,1) both;
+}
+.flight-engine-plume-moon { background: linear-gradient(180deg, rgba(165,243,252,0), #a5f3fc 58%, #fff 100%); }
+.flight-engine-plume-mars { background: linear-gradient(180deg, rgba(254,215,170,0), #fb923c 46%, #fff7ed 100%); }
+.flight-transition-landing .flight-thruster { top: 84%; background: #a5f3fc; }
+.spacecraft-phase-launch { animation: liftoff-screen-shake .4s ease-in-out 4; }
+.flight-liftoff-shake {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 78%, rgba(255,178,83,.25), transparent 22%);
+  opacity: 0;
+  pointer-events: none;
+  animation: liftoff-flash 5.5s ease-out both;
+}
+.flight-countdown-caption {
+  bottom: 24%;
+  z-index: 10;
+  color: #fff4cf;
+  font: 900 clamp(2rem, 6vw, 5.5rem) 'IBM Plex Mono', monospace;
+  letter-spacing: .08em;
+  text-shadow: 0 0 18px rgba(251,191,36,.7), 0 4px 18px #020617;
+  animation: countdown-pop .9s ease-out both;
+}
+.spacecraft-phase-landing .spacecraft-viewport-planet { transform: scale(1.85) !important; transition: transform 5.5s cubic-bezier(.2,.65,.35,1); }
+.spacecraft-phase-landing .spacecraft-viewport-horizon { box-shadow: 0 -24px 100px rgba(125,211,252,.58); transition: box-shadow 5.5s ease; }
+.flight-atmosphere-glow {
+  position: absolute;
+  z-index: 5;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(251,146,60,0) 35%, rgba(234,88,12,.12) 65%, rgba(251,146,60,.32));
+  mix-blend-mode: screen;
+  pointer-events: none;
+  animation: martian-entry-glow 5.5s ease-in both;
+}
+.spacecraft-phase-landing .spacecraft-viewport-horizon::after {
+  position: absolute;
+  inset: -1rem 0 auto;
+  height: 55%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(226,232,240,.28), transparent 70%);
+  content: '';
+  opacity: 0;
+  animation: landing-dust-kick 1.2s 3.1s ease-out both;
+}
+.flight-transit-notice {
+  position: absolute;
+  z-index: 10;
+  top: 50%;
+  left: 50%;
+  max-width: min(28rem, 70vw);
+  border: 1px solid rgba(103,232,249,.38);
+  border-radius: 999px;
+  background: rgba(3,18,34,.8);
+  padding: .7rem 1.2rem;
+  color: #d9faff;
+  font-size: clamp(.7rem, 1.2vw, .9rem);
+  font-weight: 700;
+  text-align: center;
+  box-shadow: 0 0 30px rgba(34,211,238,.14);
+  backdrop-filter: blur(12px);
+  transform: translate(-50%,-50%);
+  animation: transit-event-pop 5s ease both;
+}
+.flight-transit-notice span { margin-inline-end: .4rem; color: #fef3c7; }
+.flight-distance-readout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .5rem;
+  color: #9bb3c5;
+  font-size: .58rem;
+}
+.flight-distance-readout b { color: #d9faff; font: 700 .6rem 'IBM Plex Mono', monospace; }
+.flight-control-menu button span small { display: block; }
+.flight-round-button:disabled { cursor: not-allowed; opacity: .5; }
+.flight-launch-button {
+  position: absolute;
+  z-index: 13;
+  bottom: 7rem;
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .6rem;
+  border: 1px solid rgba(251,191,36,.65);
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(120,53,15,.9), rgba(15,23,42,.94));
+  padding: .85rem 1.4rem;
+  color: #fff4cf;
+  font-size: .85rem;
+  font-weight: 900;
+  box-shadow: 0 0 28px rgba(251,146,60,.2);
+  transform: translateX(-50%);
+  cursor: pointer;
+}
+.flight-launch-button:hover { background: linear-gradient(135deg, rgba(154,52,18,.98), rgba(15,23,42,.98)); box-shadow: 0 0 34px rgba(251,146,60,.35); }
+.mission-base-arrival { animation: base-surface-reveal 1.5s cubic-bezier(.2,.7,.2,1) both; transform-origin: center top; }
+.flight-countdown-caption { top: 50%; right: auto; bottom: auto; left: 50%; width: min(calc(100% - 2rem), 34rem); transform: translate(-50%,-50%); }
+@keyframes astronaut-drawer-backdrop { from { opacity: 0; } to { opacity: 1; } }
+@keyframes astronaut-drawer-backdrop-out { from { opacity: 1; } to { opacity: 0; } }
+@keyframes astronaut-drawer-in { from { opacity: .7; transform: translateX(100%); } to { opacity: 1; transform: translateX(0); } }
+@keyframes astronaut-drawer-out { from { opacity: 1; transform: translateX(0); } to { opacity: .7; transform: translateX(100%); } }
+@keyframes astronaut-drawer-in-rtl { from { opacity: .7; transform: translateX(-100%); } to { opacity: 1; transform: translateX(0); } }
+@keyframes astronaut-drawer-out-rtl { from { opacity: 1; transform: translateX(0); } to { opacity: .7; transform: translateX(-100%); } }
+
+@media (max-height: 520px) {
+  .flight-scene-hud { top: max(.35rem, env(safe-area-inset-top)); padding-block: .35rem; }
+  .flight-day-counter { top: max(3.5rem, calc(env(safe-area-inset-top) + 2.5rem)); gap: .1rem; padding: .4rem .55rem; }
+  .flight-day-counter > strong { font-size: 1.25rem; }
+  .astronaut-profile-trigger-flight { top: max(3.5rem, calc(env(safe-area-inset-top) + 2.5rem)); }
+  .flight-progress-hud { bottom: max(.4rem, env(safe-area-inset-bottom)); gap: .3rem; padding: .45rem .65rem; }
+  .flight-scene-caption { top: 48%; transform: translateY(1.5rem); }
+  .flight-countdown-caption { top: 50%; transform: translate(-50%,-50%); }
+}
+
+@keyframes vehicle-liftoff { 0% { top: 68%; opacity: 0; transform: translate(-50%,-50%) rotate(-45deg) scale(.75); } 10% { opacity: 1; } 20% { top: 66%; transform: translate(-50%,-50%) rotate(-45deg) scale(1); } 100% { top: -24%; opacity: .08; transform: translate(-50%,-50%) rotate(-45deg) scale(.52); } }
+@keyframes exhaust-liftoff { 0%, 10% { opacity: 0; transform: translateX(-50%) scaleY(.4); } 22% { opacity: 1; transform: translateX(-50%) scaleY(1.12); } 100% { opacity: 0; transform: translate(-50%,-145vh) scaleY(.6); } }
+@keyframes vehicle-descent { 0% { top: -15%; opacity: .28; transform: translateX(-50%) rotate(-45deg) scale(.56); } 18% { opacity: 1; } 100% { top: 75%; opacity: 1; transform: translateX(-50%) rotate(-45deg) scale(1.04); } }
+@keyframes exhaust-descent { 0% { top: -10%; opacity: 0; transform: translate(-50%,-10vh) scaleY(.35); } 22% { opacity: .9; } 100% { top: 75%; opacity: .7; transform: translate(-50%,5vh) scaleY(.8); } }
+@keyframes liftoff-screen-shake { 0%, 100% { translate: 0 0; } 20% { translate: -2px 1px; } 40% { translate: 2px -1px; } 60% { translate: -1px -1px; } 80% { translate: 1px 1px; } }
+@keyframes liftoff-flash { 0%, 12%, 100% { opacity: 0; } 18%, 32% { opacity: .75; } 24%, 42% { opacity: .18; } }
+@keyframes countdown-pop { from { opacity: .25; transform: translate(-50%,-40%) scale(.72); } to { opacity: 1; transform: translate(-50%,-50%) scale(1); } }
+@keyframes martian-entry-glow { 0% { opacity: 0; } 35% { opacity: .35; } 70% { opacity: .8; } 100% { opacity: .42; } }
+@keyframes landing-dust-kick { 0% { opacity: 0; transform: scale(.35) translateY(1rem); } 25% { opacity: .9; } 100% { opacity: 0; transform: scale(1.5) translateY(-2rem); } }
+@keyframes transit-event-pop { 0% { opacity: 0; transform: translate(-50%,-35%) scale(.95); } 8%, 84% { opacity: 1; transform: translate(-50%,-50%) scale(1); } 100% { opacity: 0; transform: translate(-50%,-65%) scale(.98); } }
+@keyframes base-surface-reveal { from { opacity: 0; transform: translateY(1.5rem) scale(1.025); filter: brightness(.55); } to { opacity: 1; transform: translateY(0) scale(1); filter: brightness(1); } }
+@media (max-width: 640px) {
+  .flight-distance-readout { gap: .25rem; font-size: .5rem; }
+  .flight-distance-readout b { font-size: .5rem; }
+  .flight-launch-button { bottom: 6.5rem; max-width: calc(100vw - 10rem); padding: .7rem .9rem; font-size: .72rem; white-space: nowrap; }
+  .flight-countdown-caption { top: 50%; bottom: auto; transform: translate(-50%,-50%); }
+  .flight-transit-notice { top: 56%; max-width: calc(100vw - 8rem); padding: .55rem .8rem; font-size: .65rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spacecraft-phase-launch,
+  .flight-transition-launch,
+  .flight-engine-plume-launch,
+  .flight-liftoff-shake,
+  .flight-atmosphere-glow,
+  .spacecraft-phase-landing .spacecraft-viewport-horizon::after,
+  .mission-base-arrival,
+  .mission-appreciation-card {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+  .spacecraft-phase-landing .spacecraft-viewport-planet { transition-duration: .01ms !important; }
+}
+
+.mission-command-header {
+  grid-template-columns: minmax(13rem,.85fr) minmax(14rem,1.1fr) minmax(31rem,1.65fr);
+  gap: .85rem;
+  padding: .55rem .75rem;
+}
+.mission-command-clock { gap: .7rem; }
+.mission-command-actions { gap: .4rem; }
+.mission-command-map-stage { z-index: 0; min-height: 9rem; margin-top: .85rem; }
+.mission-command-map-wrap { inset-block: 0; inset-inline: 4.65rem .45rem; }
+.mission-command-map { min-width: 0; }
+.mission-command-map .base-map-surface > div.absolute.inset-x-0.top-0 { gap: .6rem; padding: .75rem 1rem; }
+.mission-command-map .base-map-surface > div.absolute.inset-x-0.top-0 > div:first-child { max-width: 65%; }
+.mission-command-map .base-map-surface > div.absolute.inset-x-0.bottom-0 { gap: .5rem; padding: .55rem .85rem .8rem; }
+.mission-objective-chip {
+  inset-inline-start: 50%;
+  top: .65rem;
+  width: min(10rem, calc(100% - 8rem));
+  gap: .2rem;
+  padding: .35rem .5rem;
+  font-size: .54rem;
+}
+.mission-objective-chip > span:nth-child(2) { font-size: .49rem; }
+.mission-critical-strip { inset-inline-end: .55rem; max-width: min(19rem, 29%); }
+.mission-side-rail { z-index: 10; inset-inline-start: .55rem; gap: .65rem; }
+.mission-side-rail-button { width: 3.2rem; min-height: 3.2rem; }
+.mission-side-drawer { z-index: 50; inset-block: .65rem; inset-inline-start: 4.85rem; width: min(27rem, calc(100vw - 6rem)); }
+.mission-routine-dock {
+  position: relative;
+  z-index: 20;
+  inset: auto;
+  width: min(56rem, 100%);
+  flex: none;
+  margin: .7rem auto 0;
+}
+.mission-routine-dock > summary { flex-wrap: wrap; }
+.mission-routine-body ol { max-height: min(23vh, 11rem); }
+.mission-language-switch { display: flex; flex: none; }
+.mission-language-switch > button {
+  min-height: 2.35rem;
+  align-items: center;
+  justify-content: center;
+  border-color: rgba(148,163,184,.2);
+  border-radius: .65rem;
+  background: rgba(255,255,255,.035);
+  padding: .45rem .55rem;
+  font-size: .68rem;
+}
+.mission-command-actions > .astronaut-profile-trigger { max-width: 12rem; }
+.mission-command-actions > .mission-menu { flex: none; }
+.mission-command-actions > .mission-menu > summary { width: 2.35rem; min-height: 2.35rem; padding: .4rem; }
+.mission-menu-panel { max-height: min(75vh, 42rem); overflow: auto; }
+.mission-game > .mission-command-header { z-index: 20; }
+.mission-game .mission-command-map-stage { z-index: 0; }
+.mission-side-drawer { z-index: 50; }
+.map-object-modal-backdrop {
+  position: absolute;
+  z-index: 60;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  padding: clamp(.75rem, 3vw, 2rem);
+  background: rgba(1,7,16,.58);
+  backdrop-filter: blur(5px);
+  animation: map-object-modal-in .16s ease-out both;
+}
+.map-object-dialog {
+  width: min(100%, 32rem);
+  max-height: min(82%, 34rem);
+  overflow: auto;
+  overscroll-behavior: contain;
+  border-radius: .9rem;
+  background: rgba(4,15,28,.97);
+}
+.map-object-dialog h3 { white-space: normal; }
+.map-object-dialog:focus { outline: none; }
+@keyframes map-object-modal-in { from { opacity: 0; } to { opacity: 1; } }
+
+@media (max-width: 1180px) {
+  .mission-command-header { grid-template-columns: minmax(0,1fr) auto; }
+  .mission-command-clock { grid-column: 1; grid-row: 1; }
+  .mission-command-actions { grid-column: 2; grid-row: 1; }
+  .mission-command-ticker { grid-column: 1 / -1; grid-row: 2; }
+  .mission-command-map-stage { margin-top: .65rem; }
+}
+@media (max-width: 980px) {
+  .mission-signal-readout { width: 2.25rem; min-height: 2.25rem; justify-content: center; padding: .35rem; }
+  .mission-signal-readout > span,
+  .mission-report-send > span { display: none; }
+  .mission-report-send { width: 2.25rem; min-height: 2.25rem; padding: .35rem; }
+  .mission-command-actions > .astronaut-profile-trigger { max-width: 9rem; }
+  .mission-command-map-wrap { inset-inline-start: 4.5rem; }
+  .mission-command-map .base-map-surface > div.absolute.inset-x-0.top-0 { padding: .65rem .8rem; }
+}
+@media (max-width: 700px) {
+  .mission-command-header { gap: .35rem; padding: .4rem; }
+  .mission-command-clock { min-width: 0; gap: .4rem; }
+  .mission-command-clock > div { min-width: 0; }
+  .mission-command-clock h1 { max-width: min(8rem, 26vw); }
+  .mission-daylight-indicator { gap: .2rem; font-size: .5rem; }
+  .mission-command-actions { gap: .25rem; }
+  .mission-command-actions > .astronaut-profile-trigger { max-width: 5.5rem; gap: .35rem; padding: .4rem .5rem; }
+  .mission-command-actions > .astronaut-profile-trigger > span { display: none; }
+  .mission-command-actions > .astronaut-profile-trigger > svg { width: 15px; }
+  .mission-command-actions > .astronaut-profile-trigger > strong { font-size: .62rem; }
+  .mission-language-switch > button { width: 2.15rem; min-height: 2.15rem; gap: .2rem; padding: .3rem; }
+  .mission-command-actions > .mission-menu > summary { width: 2.15rem; min-height: 2.15rem; }
+  .mission-command-map-stage { margin-top: .45rem; }
+  .mission-command-map-wrap { inset-inline-start: 3.55rem; inset-inline-end: .2rem; }
+  .mission-side-rail { inset-inline-start: .15rem; gap: .45rem; }
+  .mission-side-rail-button { width: 2.75rem; min-height: 2.75rem; }
+  .mission-side-drawer { inset-block: .4rem; inset-inline-start: 3.05rem; width: calc(100vw - 3.5rem); }
+  .mission-objective-chip {
+    top: .4rem;
+    inset-inline-start: auto;
+    inset-inline-end: .45rem;
+    width: min(10rem, calc(100% - 5rem));
+    transform: none;
+    text-align: end;
+  }
+  .mission-command-map .base-map-surface > div.absolute.inset-x-0.top-0 > div:first-child > :not(.eyebrow),
+  .mission-command-map .base-map-surface > div.absolute.inset-x-0.top-0 > div:nth-child(2) { display: none; }
+  .mission-critical-strip { max-width: 44%; }
+  .mission-routine-dock { margin-top: .45rem; }
+  .mission-routine-dock > summary { gap: .35rem; padding: .4rem .5rem; }
+  .mission-routine-body ol { max-height: min(22vh, 9rem); }
+  .mission-routine-expanded .mission-routine-body ol { max-height: min(13vh, 6rem); }
+  .mission-routine-expanded .mission-side-rail { gap: .25rem; }
+  .mission-routine-expanded .mission-side-rail-button { width: 2.1rem; min-height: 2.1rem; border-radius: .6rem; }
+  .mission-routine-expanded .mission-side-rail-button svg { width: 14px; height: 14px; }
+}
+@media (max-width: 480px) {
+  .mission-command-header { grid-template-columns: minmax(0,1fr); }
+  .mission-command-clock { grid-column: 1; grid-row: 1; }
+  .mission-command-clock h1 { max-width: 9rem; }
+  .mission-command-actions { grid-column: 1; grid-row: 2; justify-content: flex-end; }
+  .mission-command-ticker { grid-column: 1; grid-row: 3; }
+  .mission-command-ticker .mission-log > div:first-child { padding: .3rem .4rem; }
+  .mission-command-map .base-map-surface > div.absolute.inset-x-0.top-0 { padding: .5rem; }
+  .mission-command-map .base-map-surface > div.absolute.inset-x-0.top-0 > div:first-child { max-width: 68%; }
+  .mission-command-map .base-map-surface > div.absolute.inset-x-0.bottom-0 { padding: .4rem .5rem .65rem; }
+  .mission-routine-dock > summary { min-height: 2.65rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .map-object-modal-backdrop { animation: none; }
+}
+@media (max-height: 520px) {
+  .mission-command-screen { height: auto; min-height: 100dvh; overflow-x: hidden; overflow-y: auto; }
+  .mission-command-map-stage { min-height: 6rem; }
+  .mission-side-rail {
+    inset-block-start: .25rem;
+    inset-block-end: auto;
+    inset-inline-start: 50%;
+    width: max-content;
+    max-width: calc(100% - 4.5rem);
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: .3rem;
+    transform: translateX(-50%);
+  }
+  .mission-side-rail-button { width: 2rem; min-height: 2rem; }
+  .mission-command-screen[dir="rtl"] .mission-side-rail { transform: translateX(50%); }
+  .mission-command-map-wrap { inset-block-start: 2.45rem; }
+  .mission-objective-chip { top: 2.55rem; }
+  .mission-routine-body { max-height: min(34vh,10rem); overflow-y: auto; }
+  .mission-routine-body ol { max-height: 14vh; }
 }

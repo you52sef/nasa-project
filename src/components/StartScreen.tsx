@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, ArrowLeft, ArrowRight, Copy, Moon, Rocket, Shuffle, Volume2, VolumeX } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, ArrowRight, ChevronDown, Copy, Database, Moon, Rocket, Shuffle, Volume2, VolumeX } from 'lucide-react'
 import ar from '../i18n/ar'
 import en from '../i18n/en'
 import { useGameStore } from '../store/gameStore'
@@ -7,34 +7,63 @@ import { useSettingsStore } from '../store/settingsStore'
 import { LanguageSwitch } from './LanguageSwitch'
 import { ModelDisclosure } from './ModelDisclosure'
 import { SCENARIOS, type ScenarioId } from '../game/scenarios'
-import { getAvailableCrewRoles } from '../game/teamwork'
+import { CREW_ROLES, getMissionCrewAssignments } from '../game/teamwork'
 import { EVENTS } from '../game/events'
 import { useSound } from '../hooks/useSound'
 import { estimateTransfer } from '../game/flightPhysics'
 import { getAllowedCrewSizes, getCrewRoster, localizeCrewRole } from '../game/crewRosters'
 import { LearningAcademy } from './LearningAcademy'
+import { DataOriginsModal } from './DataOriginsModal'
+import type { MissionType } from '../game/model'
+import { MISSION_PROFILES } from '../game/missionProfiles'
+
+type SimulationSetupStep =
+  | 'destination'
+  | 'mission-objective'
+  | 'crew-size'
+  | 'control-mode'
+  | 'specialist-role'
+  | 'mission-details'
+  | 'difficulty'
+  | 'base-name'
+
+const SIMULATION_SETUP_STEPS: readonly SimulationSetupStep[] = [
+  'destination',
+  'mission-objective',
+  'crew-size',
+  'control-mode',
+  'specialist-role',
+  'mission-details',
+  'difficulty',
+  'base-name',
+]
 
 export function StartScreen() {
   const language = useSettingsStore((state) => state.language)
   const t = language === 'ar' ? ar : en
   const destination = useGameStore((state) => state.destination)
   const crewSize = useGameStore((state) => state.crewSize)
+  const astronautName = useGameStore((state) => state.astronautName)
+  const astronautDutyId = useGameStore((state) => state.astronautDutyId)
   const baseName = useGameStore((state) => state.baseName)
   const maxDays = useGameStore((state) => state.maxDays)
   const difficulty = useGameStore((state) => state.difficulty)
   const objective = useGameStore((state) => state.objective)
   const scenario = useGameStore((state) => state.scenario)
   const missionMode = useGameStore((state) => state.missionMode)
+  const missionType = useGameStore((state) => state.missionType)
   const controlMode = useGameStore((state) => state.controlMode)
-  const controlledRole = useGameStore((state) => state.controlledRole)
+  const controlledDutyId = useGameStore((state) => state.controlledDutyId)
   const missionSeed = useGameStore((state) => state.missionSeed)
   const setDestination = useGameStore((state) => state.setDestination)
   const setMissionMode = useGameStore((state) => state.setMissionMode)
   const setControlMode = useGameStore((state) => state.setControlMode)
-  const setControlledRole = useGameStore((state) => state.setControlledRole)
+  const setControlledDuty = useGameStore((state) => state.setControlledDuty)
   const setCrewSize = useGameStore((state) => state.setCrewSize)
+  const setAstronautName = useGameStore((state) => state.setAstronautName)
   const setBaseName = useGameStore((state) => state.setBaseName)
   const setMissionLength = useGameStore((state) => state.setMissionLength)
+  const setMissionType = useGameStore((state) => state.setMissionType)
   const setDifficulty = useGameStore((state) => state.setDifficulty)
   const setObjective = useGameStore((state) => state.setObjective)
   const setScenario = useGameStore((state) => state.setScenario)
@@ -47,17 +76,34 @@ export function StartScreen() {
   const [launching, setLaunching] = useState(false)
   const [confirmNewMission, setConfirmNewMission] = useState(false)
   const [modeChosen, setModeChosen] = useState(false)
+  const [setupStep, setSetupStep] = useState<SimulationSetupStep>('destination')
   const [academyOpen, setAcademyOpen] = useState(false)
+  const [dataOriginsOpen, setDataOriginsOpen] = useState(false)
+  const [missionPlanExpanded, setMissionPlanExpanded] = useState(false)
   const [seedCopied, setSeedCopied] = useState(false)
   const launchButtonRef = useRef<HTMLButtonElement>(null)
+  const missionPlanDetailsRef = useRef<HTMLDivElement>(null)
   const cancelConfirmationRef = useRef<HTMLButtonElement>(null)
   const confirmMissionRef = useRef<HTMLButtonElement>(null)
   const { soundEnabled, toggleSound, playLaunch, playScenario } = useSound()
   const isArabic = language === 'ar'
   const DirectionIcon = isArabic ? ArrowLeft : ArrowRight
   const transferEstimate = estimateTransfer(destination === 'moon' ? 'earth-moon' : 'earth-mars')
+  const missionProfile = MISSION_PROFILES[missionType]
+  const missionObjectiveChoices: MissionType[] = destination === 'moon'
+    ? ['moon-exploration', 'moon-settlement']
+    : ['mars-opposition', 'mars-conjunction']
   const allowedCrewSizes = getAllowedCrewSizes(destination, maxDays)
+    .filter((size) => size >= missionProfile.minimumCrew)
   const crewRoster = getCrewRoster(destination, maxDays, crewSize)
+  const crewDuties = getMissionCrewAssignments(crewSize, destination, maxDays)
+  const visibleThroughStep = SIMULATION_SETUP_STEPS.indexOf(setupStep)
+  const isStepVisible = (step: SimulationSetupStep) =>
+    SIMULATION_SETUP_STEPS.indexOf(step) <= visibleThroughStep
+
+  useEffect(() => {
+    if (missionPlanDetailsRef.current) missionPlanDetailsRef.current.inert = !missionPlanExpanded
+  }, [missionPlanExpanded])
 
   const chooseMode = (mode: 'education' | 'simulation') => {
     setMissionMode(mode)
@@ -70,8 +116,10 @@ export function StartScreen() {
       setScenario('baseline')
       setObjective('tutorial')
       setAcademyOpen(true)
-    } else if (objective === 'tutorial') {
-      setObjective('survival')
+    } else {
+      setSetupStep('destination')
+      if (objective === 'tutorial') setObjective('survival')
+      if (maxDays !== 30 && maxDays !== 180) setMissionLength(30)
     }
   }
 
@@ -162,6 +210,15 @@ export function StartScreen() {
             <div className="flex items-center gap-2">
               <button
                 type="button"
+                onClick={() => setDataOriginsOpen(true)}
+                className="icon-button !h-9 !w-9"
+                aria-label={t.dataOriginsLabel}
+                title={t.dataOriginsLabel}
+              >
+                <Database size={15} />
+              </button>
+              <button
+                type="button"
                 onClick={toggleSound}
                 className="icon-button !h-9 !w-9"
                 aria-label={soundEnabled ? t.muteSound : t.unmuteSound}
@@ -228,7 +285,17 @@ export function StartScreen() {
           <div className="mb-8">
             <p className="text-xs font-bold tracking-[0.2em] text-cyan-300">{t.flightPlanLabel}</p>
             <h2 className="mt-2 text-2xl font-black sm:text-3xl">{modeChosen ? (missionMode === 'education' ? t.educationSection : t.simulationSection) : t.chooseMode}</h2>
-            {modeChosen ? <p className="mt-2 text-xs text-slate-500">{missionMode === 'simulation' ? `${maxDays} ${t.operatingCyclesUnit} · ` : ''}{t.cycleSinglePlayerNote}</p> : null}
+            {modeChosen ? <p className="mt-2 text-xs text-slate-500">
+              {missionMode === 'simulation'
+                ? `${destination === 'moon'
+                  ? maxDays <= 30
+                    ? (isArabic ? 'استكشاف قمري قصير' : 'Lunar exploration')
+                    : (isArabic ? 'قاعدة قمرية طويلة الأمد' : 'Long-duration lunar base')
+                  : maxDays <= 30
+                    ? (isArabic ? 'رحلة معارضة إلى المريخ' : 'Mars opposition mission')
+                    : (isArabic ? 'رحلة اقتران إلى المريخ' : 'Mars conjunction mission')} · ${maxDays} ${isArabic ? 'يومًا' : 'days'} · `
+                : ''}{t.cycleSinglePlayerNote}
+            </p> : null}
             {modeChosen ? <p className="mt-3 border-s border-cyan-200/40 bg-white/[0.02] px-3 py-2 text-xs leading-5 text-slate-400">{t.singlePlayerNote}</p> : null}
           </div>
 
@@ -281,47 +348,17 @@ export function StartScreen() {
           </details>
 
           {missionMode === 'simulation' ? <>
-          <fieldset className="mb-7">
-            <legend className="mb-3 text-sm font-bold text-slate-200">{t.controlStyleTitle}</legend>
-            <div className="grid gap-3 sm:grid-cols-2">
-              {(['full', 'specialist'] as const).map((style) => (
-                <button
-                  key={style}
-                  type="button"
-                  onClick={() => setControlMode(style)}
-                  aria-pressed={controlMode === style}
-                  className={`rounded-xl border p-4 text-start transition ${controlMode === style ? 'border-cyan-200/50 bg-cyan-100/[0.07] text-cyan-50' : 'border-white/10 bg-white/[0.02] text-slate-300 hover:bg-white/[0.05]'}`}
-                >
-                  <span className="block text-sm font-bold">{style === 'full' ? t.fullControlTitle : t.specialistControlTitle}</span>
-                  <span className="mt-1 block text-xs leading-5 text-slate-400">{style === 'full' ? t.fullControlDescription : t.specialistControlDescription}</span>
-                </button>
-              ))}
-            </div>
-            {controlMode === 'specialist' ? (
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                {getAvailableCrewRoles(crewSize).map((role) => (
-                  <button
-                    key={role.id}
-                    type="button"
-                    onClick={() => setControlledRole(role.id)}
-                    aria-pressed={controlledRole === role.id}
-                    className={`rounded-lg border px-3 py-2 text-start text-xs transition ${controlledRole === role.id ? 'border-violet-200/50 bg-violet-100/[0.07] text-violet-100' : 'border-white/10 bg-white/[0.02] text-slate-400'}`}
-                  >
-                    {role.icon} {t[role.title]}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </fieldset>
-
-          <fieldset className="mb-7">
+          {isStepVisible('destination') ? <fieldset className="mb-6">
             <legend className="mb-3 text-sm font-bold text-slate-200">{t.destination}</legend>
             <div className="grid grid-cols-2 gap-3">
               {(['moon', 'mars'] as const).map((target) => (
                 <button
                   key={target}
                   type="button"
-                  onClick={() => setDestination(target)}
+                  onClick={() => {
+                    setDestination(target)
+                    setSetupStep('mission-objective')
+                  }}
                   className={`planet-choice ${destination === target ? 'planet-choice-active' : ''}`}
                   aria-pressed={destination === target}
                 >
@@ -331,9 +368,167 @@ export function StartScreen() {
                 </button>
               ))}
             </div>
-          </fieldset>
+          </fieldset> : null}
 
-          <fieldset className="mb-6">
+          {isStepVisible('mission-objective') ? <fieldset className="mb-6">
+            <legend className="mb-2 text-sm font-bold text-slate-200">{t.missionObjective}</legend>
+            <div className="grid grid-cols-2 gap-2">
+              {missionObjectiveChoices.map((profileId) => {
+                const profile = MISSION_PROFILES[profileId]
+                return (
+                <button
+                  key={profileId}
+                  type="button"
+                  onClick={() => {
+                    setMissionType(profileId)
+                    setObjective(profile.objective)
+                    setSetupStep('crew-size')
+                  }}
+                  className={`rounded-xl border px-3 py-3 text-start text-sm font-bold transition ${missionType === profileId ? 'border-cyan-300/60 bg-cyan-300/10 text-cyan-100' : 'border-white/10 bg-white/[0.03] text-slate-400 hover:bg-white/[0.06]'}`}
+                  aria-pressed={missionType === profileId}
+                >
+                  <span className="block">{profile.goal[language]}</span>
+                  <span className="mt-1 block text-[10px] font-normal leading-5 text-slate-400">{profile.goalDescription[language]}</span>
+                </button>
+                )
+              })}
+            </div>
+            <p className="mt-2 text-[10px] leading-5 text-slate-500">{t.missionTypeDurationNote}</p>
+            <section className="mission-plan-card mt-4 rounded-xl border border-cyan-200/15 bg-cyan-100/[0.035]">
+              <button
+                type="button"
+                className="mission-plan-toggle"
+                aria-expanded={missionPlanExpanded}
+                aria-controls="mission-field-plan-details"
+                onClick={() => setMissionPlanExpanded((expanded) => !expanded)}
+              >
+                <span>
+                  <span className="block text-[10px] font-black uppercase tracking-wider text-cyan-100">{t.missionRequirements}</span>
+                  <span className="mt-1 block text-xs font-bold text-slate-200">{missionProfile.goal[language]}</span>
+                </span>
+                <span className="mission-plan-toggle-label">
+                  {missionPlanExpanded ? t.hideMissionDetails : t.showMissionDetails}
+                  <ChevronDown size={15} aria-hidden="true" />
+                </span>
+              </button>
+              <div
+                ref={missionPlanDetailsRef}
+                id="mission-field-plan-details"
+                className={`mission-plan-disclosure${missionPlanExpanded ? ' is-expanded' : ''}`}
+                aria-hidden={!missionPlanExpanded}
+              >
+                <div className="mission-plan-disclosure-inner">
+                  <div className="border-t border-cyan-200/10 p-4">
+                    <p className="text-[11px] leading-5 text-slate-300">
+                      {t.minimumCrew}: {missionProfile.minimumCrew} {t.crew}
+                    </p>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      <div>
+                        <h4 className="text-[11px] font-bold text-slate-200">{t.requiredEquipment}</h4>
+                        <ul className="mt-1 space-y-1 text-[10px] leading-5 text-slate-400">
+                          {missionProfile.equipment.map((item) => <li key={item.en}>• {item[language]}</li>)}
+                        </ul>
+                      </div>
+                      <div>
+                        <h4 className="text-[11px] font-bold text-slate-200">{t.dailySurfaceActivities}</h4>
+                        <ul className="mt-1 space-y-1 text-[10px] leading-5 text-slate-400">
+                          {missionProfile.dailyActivities.map((item) => <li key={item.en}>• {item[language]}</li>)}
+                        </ul>
+                      </div>
+                    </div>
+                    <p className="mt-3 text-[10px] leading-5 text-slate-500">{t.missionProfileDisclaimer}</p>
+                    <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+                      {missionProfile.sources.map((source) => (
+                        <a key={source.url} href={source.url} target="_blank" rel="noreferrer" className="text-[10px] text-sky-200 underline decoration-sky-200/30 underline-offset-2 hover:text-white">
+                          {source.label[language]}
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </fieldset> : null}
+
+          {isStepVisible('crew-size') ? <div className="mb-6">
+            <label htmlFor="crew-size" className="mb-2 block text-sm font-bold text-slate-200">{t.crew}</label>
+            <div className="grid grid-cols-4 gap-2">
+              {allowedCrewSizes.map((size) => (
+                <button
+                  key={size}
+                  type="button"
+                  onClick={() => {
+                    setCrewSize(size)
+                    setSetupStep('control-mode')
+                  }}
+                  className={`rounded-md border px-3 py-3 text-sm font-bold transition ${crewSize === size ? 'border-cyan-200/50 bg-cyan-100/[0.06] text-cyan-100' : 'border-white/10 bg-white/[0.02] text-slate-400 hover:bg-white/[0.05]'}`}
+                  aria-pressed={crewSize === size}
+                >
+                  👩‍🚀 {size}
+                </button>
+              ))}
+            </div>
+            {crewRoster ? (
+              <div className="mt-3 rounded-xl border border-cyan-200/10 bg-cyan-100/[0.03] p-3" aria-live="polite">
+                <p className="text-[10px] font-black uppercase tracking-wider text-cyan-100">{crewRoster.label} · {crewRoster.crewSize} {t.crew}</p>
+                <ul className="mt-2 grid gap-1 text-[11px] text-slate-300 sm:grid-cols-2">
+                  {crewRoster.assignments.map((assignment) => (
+                    <li key={assignment.title}>{assignment.count > 1 ? `${assignment.count} × ` : ''}{localizeCrewRole(assignment.title, language)}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div> : null}
+
+          {isStepVisible('control-mode') ? <fieldset className="mb-7">
+            <legend className="mb-3 text-sm font-bold text-slate-200">{t.controlStyleTitle}</legend>
+            <div className="grid gap-3 sm:grid-cols-2">
+              {(['full', 'specialist'] as const).map((style) => (
+                <button
+                  key={style}
+                  type="button"
+                  onClick={() => {
+                    setControlMode(style)
+                    setSetupStep(style === 'specialist' ? 'specialist-role' : 'mission-details')
+                  }}
+                  aria-pressed={controlMode === style}
+                  className={`rounded-xl border p-4 text-start transition ${controlMode === style ? 'border-cyan-200/50 bg-cyan-100/[0.07] text-cyan-50' : 'border-white/10 bg-white/[0.02] text-slate-300 hover:bg-white/[0.05]'}`}
+                >
+                  <span className="block text-sm font-bold">{style === 'full' ? t.fullControlTitle : t.specialistControlTitle}</span>
+                  <span className="mt-1 block text-xs leading-5 text-slate-400">{style === 'full' ? t.fullControlDescription : t.specialistControlDescription}</span>
+                </button>
+              ))}
+            </div>
+          </fieldset> : null}
+
+          {controlMode === 'specialist' && isStepVisible('specialist-role') ? <fieldset className="mb-7">
+            <legend className="mb-3 text-sm font-bold text-slate-200">{isArabic ? 'اختر دورك في الطاقم' : 'Choose your crew role'}</legend>
+            <div className="grid grid-cols-2 gap-2">
+              {crewDuties.map((duty) => {
+                const role = CREW_ROLES.find((candidate) => candidate.id === duty.controlRole)
+                if (!role) throw new Error(`Missing control profile for crew duty "${duty.id}".`)
+                return (
+                  <button
+                    key={duty.id}
+                    type="button"
+                    onClick={() => {
+                      setControlledDuty(duty.id)
+                      setSetupStep('mission-details')
+                    }}
+                    aria-pressed={controlledDutyId === duty.id}
+                    className={`rounded-lg border px-3 py-3 text-start transition ${controlledDutyId === duty.id ? 'border-violet-200/50 bg-violet-100/[0.07] text-violet-100' : 'border-white/10 bg-white/[0.02] text-slate-400'}`}
+                  >
+                    <span className="block text-sm font-bold">{role.icon} {localizeCrewRole(duty.title, language)}</span>
+                    <span className="mt-1 block text-[11px] leading-5 text-slate-400">
+                      {language === 'ar' ? duty.duty.ar : duty.duty.en}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </fieldset> : null}
+
+          {isStepVisible('mission-details') ? <fieldset className="mb-6">
             <legend className="mb-2 text-sm font-bold text-slate-200">{t.scenarioLabel}</legend>
             <div className="grid gap-2">
               {(Object.keys(SCENARIOS) as ScenarioId[]).map((scenarioId) => (
@@ -355,60 +550,26 @@ export function StartScreen() {
                 </button>
               ))}
             </div>
-          </fieldset>
-
-          <div className="mb-6">
-            <label htmlFor="crew-size" className="mb-2 block text-sm font-bold text-slate-200">{t.crew}</label>
-            <div className="grid grid-cols-4 gap-2">
-              {allowedCrewSizes.map((size) => (
-                <button
-                  key={size}
-                  type="button"
-                  onClick={() => setCrewSize(size)}
-                  className={`rounded-md border px-3 py-3 text-sm font-bold transition ${crewSize === size ? 'border-cyan-200/50 bg-cyan-100/[0.06] text-cyan-100' : 'border-white/10 bg-white/[0.02] text-slate-400 hover:bg-white/[0.05]'}`}
-                  aria-pressed={crewSize === size}
-                >
-                  👩‍🚀 {size}
-                </button>
-              ))}
+            <div className="mt-5">
+              <p className="mb-2 text-sm font-bold text-slate-200">{t.missionObjective}: {missionProfile.goal[language]}</p>
+              <p className="text-xs leading-5 text-slate-400">{missionProfile.goalDescription[language]}</p>
             </div>
-            {crewRoster ? (
-              <div className="mt-3 rounded-xl border border-cyan-200/10 bg-cyan-100/[0.03] p-3" aria-live="polite">
-                <p className="text-[10px] font-black uppercase tracking-wider text-cyan-100">{crewRoster.label} · {crewRoster.crewSize} {t.crew}</p>
-                <ul className="mt-2 grid gap-1 text-[11px] text-slate-300 sm:grid-cols-2">
-                  {crewRoster.assignments.map((assignment) => (
-                    <li key={assignment.title}>{assignment.count > 1 ? `${assignment.count} × ` : ''}{localizeCrewRole(assignment.title, language)}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-          </div>
+            <button type="button" onClick={() => setSetupStep('difficulty')} className="secondary-button mt-4 w-full justify-center">
+              {isArabic ? 'متابعة إلى الصعوبة' : 'Continue to difficulty'}
+            </button>
+          </fieldset> : null}
 
-          <fieldset className="mb-6">
-            <legend className="mb-2 text-sm font-bold text-slate-200">{t.missionLength}</legend>
-            <div className="grid grid-cols-3 gap-2">
-              {[10, 30, 60].map((days) => (
-                <button
-                  key={days}
-                  type="button"
-                  onClick={() => setMissionLength(days)}
-                  className={`rounded-xl border px-3 py-3 text-sm font-bold transition ${maxDays === days ? 'border-cyan-300/60 bg-cyan-300/10 text-cyan-100' : 'border-white/10 bg-white/[0.03] text-slate-400 hover:bg-white/[0.06]'}`}
-                  aria-pressed={maxDays === days}
-                >
-                  {days} {t.operatingCyclesUnit}
-                </button>
-              ))}
-            </div>
-          </fieldset>
-
-          <fieldset className="mb-6">
+          {isStepVisible('difficulty') ? <fieldset className="mb-6">
             <legend className="mb-2 text-sm font-bold text-slate-200">{t.difficulty}</legend>
             <div className="grid grid-cols-3 gap-2">
               {(['easy', 'normal', 'hard'] as const).map((level) => (
                 <button
                   key={level}
                   type="button"
-                  onClick={() => setDifficulty(level)}
+                  onClick={() => {
+                    setDifficulty(level)
+                    setSetupStep('base-name')
+                  }}
                   className={`rounded-md border px-2 py-3 text-sm font-bold transition ${difficulty === level ? 'border-cyan-200/50 bg-cyan-100/[0.06] text-cyan-100' : 'border-white/10 bg-white/[0.02] text-slate-400 hover:bg-white/[0.05]'}`}
                   aria-pressed={difficulty === level}
                 >
@@ -417,25 +578,8 @@ export function StartScreen() {
               ))}
             </div>
             <p className="mt-2 text-xs leading-5 text-slate-500">{t.difficultyDescription[difficulty]}</p>
-          </fieldset>
+          </fieldset> : null}
 
-          <fieldset className="mb-6">
-            <legend className="mb-2 text-sm font-bold text-slate-200">{t.missionObjective}</legend>
-            <div className="grid gap-2">
-              {(['survival', 'science', 'exploration'] as const).map((goal) => (
-                <button
-                  key={goal}
-                  type="button"
-                  onClick={() => setObjective(goal)}
-                  className={`flex items-center justify-between gap-3 rounded-md border px-3 py-3 text-start text-sm transition ${objective === goal ? 'border-cyan-200/50 bg-cyan-100/[0.06] text-cyan-100' : 'border-white/10 bg-white/[0.02] text-slate-400 hover:bg-white/[0.05]'}`}
-                  aria-pressed={objective === goal}
-                >
-                  <span className="font-bold">{t[`objective_${goal}`]}</span>
-                  <span className="text-[11px] text-slate-500">{t[`objective_${goal}_description`]}</span>
-                </button>
-              ))}
-            </div>
-          </fieldset>
           </> : (
             <section className="mb-7 rounded-xl border border-cyan-200/15 bg-cyan-100/[0.035] p-4">
               <p className="text-sm font-bold text-cyan-100">👩‍🚀 {t.educationSection}</p>
@@ -443,7 +587,25 @@ export function StartScreen() {
             </section>
           )}
 
-          <div className="mb-7">
+          {(missionMode !== 'simulation' || isStepVisible('base-name')) ? <div className="mb-7">
+            <fieldset className="mb-5 rounded-xl border border-cyan-200/15 bg-cyan-100/[0.035] p-4">
+              <legend className="px-2 text-sm font-bold text-cyan-100">{t.astronautProfileTitle}</legend>
+              <label className="block text-[11px] font-bold text-slate-200" htmlFor="astronaut-name">
+                {t.astronautName}
+                <input
+                  id="astronaut-name"
+                  value={astronautName}
+                  onChange={(event) => setAstronautName(event.target.value)}
+                  maxLength={40}
+                  autoComplete="name"
+                  placeholder={t.astronautNamePlaceholder}
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-slate-950/60 px-3 py-2 text-sm font-normal text-white placeholder:text-slate-600"
+                />
+              </label>
+              <p className="mt-2 text-[10px] text-slate-400">
+                {t.astronautDuty}: {localizeCrewRole(crewDuties.find((duty) => duty.id === astronautDutyId)?.title || crewDuties[0]?.title || t.astronautDefaultName, language)}
+              </p>
+            </fieldset>
             <label htmlFor="base-name" className="mb-2 block text-sm font-bold text-slate-200">
               {t.baseName} <span className="font-normal text-cyan-200">*</span>
             </label>
@@ -460,9 +622,9 @@ export function StartScreen() {
               aria-invalid={Boolean(loadError && !baseName.trim())}
               className="w-full rounded-md border border-white/10 bg-[#0b1725] px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-200/50 focus:ring-2 focus:ring-cyan-200/10"
             />
-          </div>
+          </div> : null}
 
-          {missionMode === 'simulation' ? <div className="mb-7">
+          {missionMode === 'simulation' && isStepVisible('base-name') ? <div className="mb-7">
             <label htmlFor="mission-seed" className="mb-2 block text-sm font-bold text-slate-200">{t.scenarioSeed}</label>
             <div className="flex gap-2">
               <input
@@ -488,11 +650,11 @@ export function StartScreen() {
             <p className="mt-2 text-xs leading-5 text-slate-500">{seedCopied ? t.seedCopied : t.seedDescription}</p>
           </div> : null}
 
-          <button ref={launchButtonRef} type="button" onClick={handleLaunch} className="primary-button w-full" disabled={launching}>
+          {(missionMode !== 'simulation' || isStepVisible('base-name')) ? <button ref={launchButtonRef} type="button" onClick={handleLaunch} className="primary-button w-full" disabled={launching}>
             <Rocket size={18} />
             {t.launch}
             <DirectionIcon size={17} />
-          </button>
+          </button> : null}
           {loadError ? <p role="alert" className="mt-3 text-xs text-rose-300">{loadError}</p> : null}
 
           {savedGame ? (
@@ -517,6 +679,7 @@ export function StartScreen() {
           )}
         </div>
       </section>
+      {dataOriginsOpen ? <DataOriginsModal onClose={() => setDataOriginsOpen(false)} /> : null}
       <div className="absolute bottom-4 flex items-center gap-2 text-[10px] font-medium tracking-[0.24em] text-slate-600">
         <Moon size={12} /> {t.trainingSimulatorLabel}
       </div>

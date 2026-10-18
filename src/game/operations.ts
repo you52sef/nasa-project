@@ -22,8 +22,8 @@ export const MISSION_OPERATIONS: readonly MissionOperationDefinition[] = [
     crew: { en: '3: Geologist, Biologist, Driver', ar: '٣: جيولوجي، عالم أحياء، سائق' },
     crewMinimum: 3,
     requiredCrewSpecialties: [
-      ['science', 'engineering', 'agriculture'],
-      ['medical', 'agriculture'],
+      ['science', 'engineering', 'agriculture', 'engineering-science', 'geology-agriculture'],
+      ['medical', 'agriculture', 'science-medical'],
       ['pilot', 'command', 'robotics'],
     ],
     destinations: ['moon', 'mars'],
@@ -75,7 +75,11 @@ export const MISSION_OPERATIONS: readonly MissionOperationDefinition[] = [
     title: { en: 'Rescue & Emergency', ar: 'الإنقاذ والطوارئ' },
     crew: { en: 'Space Commander, Maintenance Engineer, Medic', ar: 'قائد فضاء، مهندس صيانة، ومسعف' },
     crewMinimum: 3,
-    requiredCrewSpecialties: [['command'], ['engineering', 'power', 'robotics', 'resources'], ['medical']],
+    requiredCrewSpecialties: [
+      ['command'],
+      ['engineering', 'power', 'robotics', 'resources', 'engineering-science'],
+      ['medical', 'science-medical'],
+    ],
     destinations: ['moon', 'mars'],
     requiredBuildings: ['storm-shelter', 'airlock', 'workshop', 'medical-bay'],
     steps: [

@@ -33,7 +33,7 @@ export const ACHIEVEMENTS: AchievementDefinition[] = [
   { id: 'habitat-architect', icon: '▦', name: { ar: 'مهندس الموطن', en: 'Habitat Architect' }, description: { ar: 'ابنِ دفيئة ومعيد تدوير المياه.', en: 'Build a greenhouse and a water recycler.' } },
   { id: 'storm-ready', icon: '⛨', name: { ar: 'استعداد للعواصف', en: 'Storm Ready' }, description: { ar: 'جهّز ملجأ العواصف والبطارية.', en: 'Build a storm shelter and a battery.' } },
   { id: 'scenario-specialist', icon: '◎', name: { ar: 'خبير السيناريوهات', en: 'Scenario Specialist' }, description: { ar: 'أكمل سيناريو تحدٍ غير افتراضي.', en: 'Complete a non-standard mission scenario.' } },
-  { id: 'flight-school', icon: '⌑', name: { ar: 'خريج مدرسة الطيران', en: 'Flight School Graduate' }, description: { ar: 'أكمل خطوات التدريب الخمس.', en: 'Complete all five guided tutorial steps.' } },
+  { id: 'flight-school', icon: '⌑', name: { ar: 'خريج الأكاديمية التعليمية', en: 'Learning Academy Graduate' }, description: { ar: 'أكمل خطوات التدريب الخمس.', en: 'Complete all five guided tutorial steps.' } },
 ]
 
 const STORAGE_KEY = 'little-orbit-achievements-v1'

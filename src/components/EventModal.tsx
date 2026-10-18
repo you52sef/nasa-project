@@ -117,7 +117,7 @@ export function EventModal() {
           <h3 className="text-xs font-black text-cyan-50">{t.teamEventHeader}</h3>
           <p className="mt-1 text-[10px] leading-5 text-slate-500">{t.teamEventNote}</p>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            {getAvailableCrewRoles(gameState.crewSize).map((role) => (
+            {getAvailableCrewRoles(gameState.crewSize, gameState.destination, gameState.maxDays).map((role) => (
               <article key={role.id} className="rounded-lg border border-white/[0.06] bg-slate-950/40 p-2">
                 <p className="text-[11px] font-bold text-slate-200">{role.icon} {t[role.title]}</p>
                 <p className="mt-1 text-[10px] leading-5 text-slate-500">{t[role.focus]}</p>

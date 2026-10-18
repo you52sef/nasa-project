@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { ArrowUpRight, Layers3, Power, X } from 'lucide-react'
-import type { KeyboardEvent, MouseEvent, PointerEvent } from 'react'
+import type { KeyboardEvent, MouseEvent } from 'react'
 import { BUILDINGS } from '../game/buildings'
-import { canToggleBuilding, type Action, type GameState } from '../game/model'
+import { canPerformActivity, canToggleBuilding, type Action, type GameState } from '../game/model'
 import { useGameStore } from '../store/gameStore'
 import { useSettingsStore } from '../store/settingsStore'
 import { SCENARIOS } from '../game/scenarios'
 import { EVENTS } from '../game/events'
+import { getAccessibleMissionPanels } from '../game/teamwork'
 import { BASE_MAP_SITES, getFacilityMapPosition, getFacilityNetworkOrigin } from '../game/siteLayout'
 import ar from '../i18n/ar'
 import en from '../i18n/en'
@@ -14,6 +15,7 @@ import en from '../i18n/en'
 interface Props {
   state: GameState
   onAction: (action: Action) => void
+  className?: string
 }
 
 type MapSelection =
@@ -41,7 +43,7 @@ const mapStars = [
   { x: 316, y: 459, r: 1 }, { x: 42, y: 382, r: .9 },
 ]
 
-export function BaseView({ state, onAction }: Props) {
+export function BaseView({ state, onAction, className = '' }: Props) {
   const [selected, setSelected] = useState<MapSelection | null>(null)
   const [systemsOverlay, setSystemsOverlay] = useState(false)
   const [eventCue, setEventCue] = useState<string | null>(null)
@@ -50,6 +52,9 @@ export function BaseView({ state, onAction }: Props) {
   const toggleBuilding = useGameStore((store) => store.toggleBuilding)
   const t = language === 'ar' ? ar : en
   const isMoon = state.destination === 'moon'
+  const panels = getAccessibleMissionPanels(state)
+  const canManageInfrastructure = panels.includes('infrastructure')
+  const canViewSystems = panels.includes('systems')
   const scenario = state.scenario || 'baseline'
   const weatherAffected = scenario === 'dust-front' || Boolean(
     state.activeEvent && ['solar-storm', 'low-light', 'panel-dust'].includes(state.activeEvent.id),
@@ -77,16 +82,25 @@ export function BaseView({ state, onAction }: Props) {
   useEffect(() => () => {
     if (eventCueTimer.current !== null) window.clearTimeout(eventCueTimer.current)
   }, [])
+
+  useEffect(() => {
+    if (!selected) return
+    const dismissOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') dismissSelected()
+    }
+    document.addEventListener('keydown', dismissOnEscape)
+    return () => document.removeEventListener('keydown', dismissOnEscape)
+  }, [selected])
+
+  const dismissSelected = () => {
+    setSelected(null)
+  }
+
   const select = (selection: MapSelection, extraClass = '') => ({
     role: 'button' as const,
     tabIndex: 0,
     pointerEvents: 'bounding-box' as const,
     className: `cursor-pointer outline-none focus-visible:brightness-125 ${extraClass}`,
-    onPointerEnter: (event: PointerEvent<SVGGElement>) => {
-      event.stopPropagation()
-      setSelected(selection)
-    },
-    onFocus: () => setSelected(selection),
     onClick: (event: MouseEvent<SVGGElement>) => {
       event.stopPropagation()
       setSelected(selection)
@@ -103,16 +117,16 @@ export function BaseView({ state, onAction }: Props) {
     ? { site: t.siteReferenceMoon, lat: '00°41′ N', lon: '23°26′ E' }
     : { site: t.siteReferenceMars, lat: '18°26′ N', lon: '77°27′ E' }
   const destinationLabel = isMoon ? t.moon : t.mars
-  const mappedFacilities = state.buildings.map((id, index) => ({
+  const mappedFacilities = state.buildings.filter((id) => BUILDINGS[id] && id !== 'habitat').map((id, index) => ({
     id,
     index,
-    position: getFacilityMapPosition(id, index),
+    position: getFacilityMapPosition(id),
     building: BUILDINGS[id],
-  })).filter((facility) => facility.building && facility.id !== 'habitat')
+  }))
 
   return (
-    <section className="glass-panel relative overflow-hidden" aria-label={t.siteMapLabel}>
-      <div className={`base-map-surface base-map-${scenario} base-map-period-${mapPeriod} relative isolate min-h-[390px] overflow-hidden sm:min-h-[500px] ${isMoon ? 'bg-[#555966]' : 'bg-[#714538]'}`}>
+    <section className={`glass-panel relative flex min-h-0 flex-col overflow-hidden ${className}`} aria-label={t.siteMapLabel}>
+      <div className={`base-map-surface base-map-${scenario} base-map-period-${mapPeriod} relative isolate ${className ? 'min-h-0 flex-1' : 'min-h-[390px] sm:min-h-[500px]'} overflow-hidden ${isMoon ? 'bg-[#555966]' : 'bg-[#714538]'}`}>
         <svg
           className="absolute inset-0 h-full w-full"
           viewBox="0 0 800 500"
@@ -208,8 +222,8 @@ export function BaseView({ state, onAction }: Props) {
             {t.protectedRidgeLabel}
           </text>
 
-          <path d="M403 278 C350 266 308 286 263 282 S188 297 140 327 M405 278 C462 265 508 260 559 271 S635 285 689 306 M405 280 C407 329 414 371 400 423" fill="none" stroke="#1b2028" strokeOpacity=".5" strokeWidth="13" strokeLinecap="round" />
-          <path d="M403 278 C350 266 308 286 263 282 S188 297 140 327 M405 278 C462 265 508 260 559 271 S635 285 689 306 M405 280 C407 329 414 371 400 423" fill="none" stroke="#d6c8ac" strokeOpacity=".62" strokeWidth="2" strokeDasharray="7 7" />
+          <path d="M405 280 C365 276 344 280 315 280 S270 335 225 380 M405 280 C445 267 465 272 495 280 S498 335 500 380 M405 280 C407 325 406 350 405 380" fill="none" stroke="#1b2028" strokeOpacity=".5" strokeWidth="13" strokeLinecap="round" />
+          <path d="M405 280 C365 276 344 280 315 280 S270 335 225 380 M405 280 C445 267 465 272 495 280 S498 335 500 380 M405 280 C407 325 406 350 405 380" fill="none" stroke="#d6c8ac" strokeOpacity=".62" strokeWidth="2" strokeDasharray="7 7" />
 
           <g className="map-scenario-effect" pointerEvents="none" aria-hidden="true">
             {scenario === 'dust-front' ? (
@@ -283,24 +297,45 @@ export function BaseView({ state, onAction }: Props) {
               <circle r="34" fill="transparent" pointerEvents="all" />
               {selected?.kind === 'building' && selected.index === index ? <circle r="32" fill="none" stroke="#facc15" strokeWidth="2" strokeDasharray="4 3" /> : null}
               <FacilityGlyph id={id} />
-              <circle cy="25" r="13" fill="#101722" fillOpacity=".88" stroke={isOffline ? '#fbbf24' : '#bae6fd'} strokeOpacity=".8" />
-              <text y="29" textAnchor="middle" fontSize="10" fill="#f8fafc" fontWeight="700">{index + 1}</text>
-              <circle className={!isOffline ? 'map-status-light' : undefined} cx="21" cy="-19" r="5" fill={isOffline ? '#fbbf24' : '#34d399'} stroke="#0f172a" strokeWidth="2" />
+              <circle cy="24" r="10" fill="#101722" fillOpacity=".92" stroke={isOffline ? '#fbbf24' : '#bae6fd'} strokeOpacity=".8" />
+              <text y="27" textAnchor="middle" fontSize="8" fill="#f8fafc" fontWeight="700">{index + 1}</text>
+              <circle className={!isOffline ? 'map-status-light' : undefined} cx="19" cy="-17" r="4" fill={isOffline ? '#fbbf24' : '#34d399'} stroke="#0f172a" strokeWidth="1.5" />
               <title>{building.name[language]}</title>
             </g>
           )})}
 
+          {state.constructionProject ? (() => {
+            const project = state.constructionProject
+            const building = BUILDINGS[project.buildingId]
+            const position = getFacilityMapPosition(project.buildingId)
+            return (
+              <g transform={`translate(${position.x} ${position.y})`} pointerEvents="none" aria-hidden="true">
+                <circle r="36" fill="#f59e0b" fillOpacity=".08" stroke="#fcd34d" strokeWidth="2" strokeDasharray="5 4" />
+                <path d="M-20 15V-8h40v23M-27-8h54M-12-8v23M0-8v23M12-8v23M-21 15h42" fill="none" stroke="#fde68a" strokeWidth="2" />
+                <path d="M0-9v-22h18m-6 0 6 6m-6-6 6-6" fill="none" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round" />
+                <rect x="-25" y="19" width="50" height="25" rx="5" fill="#101722" stroke="#fcd34d" />
+                <text y="29" textAnchor="middle" fill="#fef3c7" fontSize="8" fontWeight="700">{project.hoursRemaining}h</text>
+                <text y="39" textAnchor="middle" fill="#fcd34d" fontSize="5" fontWeight="700">{t.constructionInProgress}</text>
+                <title>{building?.name[language] || project.buildingId}: {t.constructionInProgress}</title>
+              </g>
+            )
+          })() : null}
+
           <g transform={`translate(${BASE_MAP_SITES.habitat.x} ${BASE_MAP_SITES.habitat.y})`} filter="url(#shadow)" {...select({ kind: 'habitat' }, 'map-habitat')} aria-label={t.habitatLabel}>
             {selected?.kind === 'habitat' ? <circle r="58" fill="none" stroke="#facc15" strokeWidth="2" strokeDasharray="4 3" /> : null}
-            <circle r="43" fill="#0c1520" fillOpacity=".76" stroke="#7dd3fc" strokeOpacity=".72" strokeWidth="2" />
-            <path d="M-29 3q0-22 29-28Q29-19 29 3L22 16H-22Z" fill="#8bdaf2" fillOpacity=".42" stroke="#c6f1ff" strokeWidth="1.5" />
-            <path d="M-22 3h44M0-24v39" stroke="#c6f1ff" strokeOpacity=".62" />
-            <rect x="-7" y="15" width="14" height="13" rx="2" fill="#dbeafe" fillOpacity=".65" />
+            <path d="M-43 18V-2a43 43 0 0 1 86 0v20Z" fill="#72bad1" fillOpacity=".3" stroke="#e0f2fe" strokeWidth="2" />
+            <path d="M-31 18V-1a31 31 0 0 1 62 0v19M-21 18V-1a21 21 0 0 1 42 0v19M-43 4h86M-37-15 37 12M37-15-37 12M0-45V18" fill="none" stroke="#c6f1ff" strokeOpacity=".7" strokeWidth="1.2" />
+            <path d="M-43 18h86l-7 11h-72Z" fill="#cbd5e1" stroke="#f8fafc" strokeWidth="1.5" />
+            <rect x="-6" y="5" width="12" height="13" rx="2" fill="#f8fafc" fillOpacity=".7" />
+            <circle cx="-25" cy="-4" r="3" fill="#bbf7d0" className="map-status-light" />
+            <circle cx="25" cy="-4" r="3" fill="#bbf7d0" className="map-status-light" />
+            <path d="M-11-28h22v7h-22z" fill="#2563eb" stroke="#dbeafe" strokeWidth=".8" />
+            <text y="-23" textAnchor="middle" fill="white" fontSize="5" fontWeight="900">A1</text>
             <circle r="51" fill="none" stroke="#7dd3fc" strokeOpacity=".45" strokeDasharray="3 5" />
             <title>{t.habitatLabel}</title>
           </g>
 
-          <g key={`rover-${state.daysSurvived}`} transform="translate(520 390) rotate(-24)" filter="url(#shadow)" {...select({ kind: 'rover' })} aria-label={t.roverLabel}>
+          <g key={`rover-${state.daysSurvived}`} transform={`translate(${BASE_MAP_SITES.rover.x} ${BASE_MAP_SITES.rover.y}) rotate(-24)`} filter="url(#shadow)" {...select({ kind: 'rover' })} aria-label={t.roverLabel}>
             <circle r="40" fill="transparent" pointerEvents="all" />
             {selected?.kind === 'rover' ? <circle r="43" fill="none" stroke="#facc15" strokeWidth="2" strokeDasharray="4 3" /> : null}
             {state.lastAction === 'explore' ? <animateMotion dur="8.5s" repeatCount="1" fill="freeze" path="M0 0 C-28 -50 -66 -73 -115 -110 C-190 -130 -295 -112 -380 -63 C-290 -86 -195 -120 -115 -110 C-75 -80 -35 -40 0 0" /> : null}
@@ -377,7 +412,7 @@ export function BaseView({ state, onAction }: Props) {
           <div className="rounded-xl border border-white/15 bg-slate-950/60 px-3 py-2 text-end text-[10px] font-semibold text-slate-100 shadow-lg backdrop-blur">
             <span className="block">{isMoon ? t.moonSurfaceLabel : t.marsSurfaceLabel}</span>
             <span className="mt-1 block text-[9px] text-emerald-200">● {t.simulatedLinkLabel}</span>
-            <button
+            {canViewSystems ? <button
               type="button"
               className={`map-layer-toggle mt-2 inline-flex items-center gap-1.5 border px-2 py-1 text-[9px] transition ${systemsOverlay ? 'border-cyan-200/30 bg-cyan-200/10 text-cyan-100' : 'border-white/10 text-slate-300 hover:bg-white/10'}`}
               onClick={() => setSystemsOverlay((value) => !value)}
@@ -385,7 +420,7 @@ export function BaseView({ state, onAction }: Props) {
             >
               <Layers3 size={12} />
               {systemsOverlay ? t.systemsLayerLabel : t.systemsViewLabel}
-            </button>
+            </button> : null}
           </div>
         </div>
 
@@ -401,14 +436,22 @@ export function BaseView({ state, onAction }: Props) {
         </div>
       </div>
       {selected ? (
-        <MapObjectInfo
-          selection={selected}
-          state={state}
-          language={language}
-          onDismiss={() => setSelected(null)}
-          onAction={onAction}
-          onToggleBuilding={toggleBuilding}
-        />
+        <div
+          className="map-object-modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) dismissSelected()
+          }}
+        >
+          <MapObjectInfo
+            selection={selected}
+            state={state}
+            language={language}
+            onDismiss={dismissSelected}
+            onAction={onAction}
+            onToggleBuilding={toggleBuilding}
+            canManageInfrastructure={canManageInfrastructure}
+          />
+        </div>
       ) : null}
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/[0.06] bg-slate-950/70 px-4 py-2.5">
         <p className="text-[10px] text-slate-500">
@@ -431,6 +474,7 @@ function MapObjectInfo({
   onDismiss,
   onAction,
   onToggleBuilding,
+  canManageInfrastructure,
 }: {
   selection: MapSelection
   state: GameState
@@ -438,6 +482,7 @@ function MapObjectInfo({
   onDismiss: () => void
   onAction: (action: Action) => void
   onToggleBuilding: (buildingId: string) => void
+  canManageInfrastructure: boolean
 }) {
   const arabic = language === 'ar'
   const t = language === 'ar' ? ar : en
@@ -467,11 +512,11 @@ function MapObjectInfo({
   const actionDisabled = Boolean(state.activeEvent || state.isGameOver)
 
   return (
-    <aside className="border-t border-sky-200/10 bg-slate-950/85 p-3.5 sm:p-4" aria-live="polite">
+    <section className="map-object-dialog border border-sky-200/20 bg-slate-950/95 p-3.5 shadow-2xl sm:p-4" role="dialog" aria-modal="true" aria-labelledby="map-object-title" aria-live="polite">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-[9px] font-bold tracking-[.16em] text-sky-200">{t.selectedObject}</p>
-          <h3 className="mt-1 truncate text-sm font-black text-white">{building?.icon || (selection.kind === 'rover' ? '🛰️' : selection.kind === 'crew' ? '🧑‍🚀' : selection.kind === 'site' ? '🔬' : '🏠')} {name}</h3>
+          <h3 id="map-object-title" className="mt-1 truncate text-sm font-black text-white">{building?.icon || (selection.kind === 'rover' ? '🛰️' : selection.kind === 'crew' ? '🧑‍🚀' : selection.kind === 'site' ? '🔬' : '🏠')} {name}</h3>
         </div>
         <button type="button" onClick={onDismiss} className="rounded-lg p-1 text-slate-400 hover:bg-white/10 hover:text-white" aria-label={t.close}><X size={15} /></button>
       </div>
@@ -488,7 +533,7 @@ function MapObjectInfo({
         </>
       ) : null}
       <div className="mt-3 flex gap-2">
-        {building ? (
+        {building && canManageInfrastructure ? (
           <button
             type="button"
             onClick={() => onToggleBuilding(building.id)}
@@ -498,7 +543,7 @@ function MapObjectInfo({
           >
             <Power size={13} /> {offline ? t.bringOnline : t.takeOffline}
           </button>
-        ) : (
+        ) : !building && canPerformActivity(state, selection.kind === 'habitat' || selection.kind === 'crew' ? 'rest' : 'explore') ? (
           <button
             type="button"
             onClick={() => onAction(selection.kind === 'habitat' || selection.kind === 'crew' ? 'rest' : 'explore')}
@@ -510,10 +555,10 @@ function MapObjectInfo({
               ? t.assignRecovery
               : t.dispatchRover}
           </button>
-        )}
+        ) : null}
       </div>
       {state.activeEvent ? <p className="mt-2 text-[9px] text-amber-200">{t.resolveEmergencyFirst}</p> : null}
-    </aside>
+    </section>
   )
 }
 
@@ -530,13 +575,28 @@ function resourceLabel(resource: string, language: 'ar' | 'en'): string {
 
 function FacilityGlyph({ id }: { id: string }) {
   if (id === 'solar-panels') {
-    return <g fill="#256b89" stroke="#c1f1ff" strokeWidth="1.5"><path d="m-22 0 17-9 14 4-17 9Zm24-5 17-9 14 4-17 9Z" /><path d="m-7-5 3 7m10-11 3 7m6-7 3 7m-22 1 3 7m10-11 3 7m6-7 3 7" fill="none" strokeWidth=".7" /></g>
+    return <g fill="#123e68" stroke="#bfdbfe" strokeWidth="1.4"><path d="m-25-11 18-7 17 5-18 8Zm4 21 18-7 17 5-18 8Zm21-21 18-7 17 5-18 8Zm4 21 18-7 17 5-18 8Z" /><path d="m-7-18 4 19m13-14 4 19m13-26 4 19m-35 2 4 19m13-14 4 19m13-26 4 19" fill="none" stroke="#7dd3fc" strokeWidth=".65" /></g>
   }
-  if (id === 'battery' || id === 'reactor') {
-    return <g stroke="#fef3c7" strokeWidth="1.5"><path d="M-18-13h36v27h-36z" fill="#81754a" /><path d="M-7-17h14v4H-7z" fill="#d6c681" /><path d="M-3-8v9h6v-9" fill="none" /></g>
+  if (id === 'reactor') {
+    return <g stroke="#bfdbfe" strokeWidth="1.5"><path d="M-13 17V-22q13-10 26 0v39Z" fill="#34485e" /><path d="M-19 17h38v5h-38ZM-10-19v34m20-34v34M-16-5h32M-16 7h32" fill="none" stroke="#94a3b8" strokeWidth="2.5" /><circle className="map-reactor-core" r="5" fill="#60a5fa" stroke="#dbeafe" /><path d="M0-32v10m-5-10h10" stroke="#60a5fa" strokeWidth="2" /></g>
+  }
+  if (id === 'battery') {
+    return <g stroke="#fef3c7" strokeWidth="1.5"><path d="M-19-13h38v28h-38z" fill="#81754a" /><path d="M-7-18h14v5H-7z" fill="#d6c681" /><path d="M-10-6h6v13h-6zm14 0h6v13H4z" fill="#fde68a" stroke="#fef3c7" /><path d="M-16 18h32" fill="none" stroke="#fbbf24" /></g>
+  }
+  if (id === 'command-center' || id === 'communications') {
+    return <g stroke="#dbeafe" strokeWidth="1.5"><path d="M-19-8h38v22h-38z" fill="#526b83" /><path d="M-13-3h9v10h-9zm17 0h9v10h-9z" fill="#67e8f9" fillOpacity=".55" /><path d="M0-8v-13m0 0 12-7m-12 7-10-5" fill="none" /><g className="map-radar-dish"><path d="M0-21q15-13 25-3-8 11-25 3Z" fill="#93c5fd" stroke="#dbeafe" /><path d="m0-21 17-2" /></g><circle cx="0" cy="-21" r="2" fill="#f8fafc" /></g>
   }
   if (id === 'greenhouse') {
-    return <g stroke="#d1fae5" strokeWidth="1.5"><path d="M-18 12v-15q18-23 36 0v15Z" fill="#4f9c78" fillOpacity=".68" /><path d="M0-12v24m-12-12h24" fill="none" /></g>
+    return <g stroke="#d1fae5" strokeWidth="1.4"><path d="M-23 12v-7a23 19 0 0 1 46 0v7Z" fill="#4f9c78" fillOpacity=".56" /><path d="M-23 6h46M-13-5 0 12 13-5M0-6v18" fill="none" /><path d="M-15 10q-2-12 4-13m-2 7q8-8 11-3m0 9Q-1-4 6-8m-5 13q7-8 12-5" fill="none" stroke="#86efac" strokeWidth="2" /><circle cx="-9" cy="-4" r="2" fill="#bbf7d0" className="map-status-light" /><circle cx="8" cy="-7" r="2" fill="#bbf7d0" className="map-status-light" /></g>
+  }
+  if (id === 'medical-bay') {
+    return <g stroke="#f8fafc" strokeWidth="1.6"><rect x="-19" y="-14" width="38" height="28" rx="3" fill="#dbeafe" /><rect x="-11" y="-9" width="9" height="8" fill="#fff" /><rect x="2" y="-9" width="9" height="8" fill="#fff" /><path d="M-4-3h8v5h5v8H4v5h-8v-5h-5V2h5Z" fill="#fb7185" stroke="#ffe4e6" /></g>
+  }
+  if (id === 'landing-pad') {
+    return <g fill="none" strokeWidth="1.5"><circle r="20" stroke="#facc15" strokeDasharray="4 3" /><circle r="14" stroke="#7dd3fc" strokeOpacity=".9" /><path d="M-9-5h18v11h-18zM-13 11h26M0-14v6m-4-3h8" fill="#475569" stroke="#e2e8f0" /><path d="M-20 0h5m30 0h5M0-25v5m0 30v5" stroke="#facc15" strokeWidth="2" /></g>
+  }
+  if (id === 'isru' || id === 'moxie' || id === 'water-recycler') {
+    return <g stroke="#bae6fd" strokeWidth="1.5"><path d="M-18-13h36v27h-36z" fill="#397b8d" /><path d="M-13-7h10v14h-10zm18 0h9v14h-9z" fill="#0f2633" stroke="#67e8f9" /><path d="M-18-16v-5h7v8m29-4v6h-8m-20 18q-7 2-7 8m31-7q7-1 8 6" fill="none" stroke="#67e8f9" strokeWidth="2" /><circle r="3" fill="#a5f3fc" /></g>
   }
   if (id === 'life-support' || id === 'moxie') {
     return <g stroke="#dbeafe" strokeWidth="1.5"><path d="M-16-13h32v27h-32z" fill="#49718a" /><path d="M-8-8v17m8-17v17m8-17v17" strokeOpacity=".6" /></g>

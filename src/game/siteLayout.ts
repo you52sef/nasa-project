@@ -5,48 +5,46 @@ export interface MapPoint {
 
 export const BASE_MAP_SITES = {
   habitat: { x: 405, y: 280 },
-  battery: { x: 535, y: 225 },
-  industrialHub: { x: 300, y: 300 },
-  landingPad: { x: 105, y: 385 },
-  protectedRidge: { x: 350, y: 220 },
+  battery: { x: 650, y: 240 },
+  industrialHub: { x: 220, y: 330 },
+  landingPad: { x: 55, y: 440 },
+  protectedRidge: { x: 335, y: 155 },
+  rover: { x: 720, y: 420 },
 } satisfies Record<string, MapPoint>
 
-export const FACILITY_MAP_SITES: Record<string, MapPoint> = {
-  'landing-pad': BASE_MAP_SITES.landingPad,
-  'solar-panels': { x: 565, y: 125 },
-  battery: BASE_MAP_SITES.battery,
-  habitat: BASE_MAP_SITES.habitat,
-  airlock: { x: 495, y: 280 },
-  suitport: { x: 485, y: 215 },
-  'electrostatic-dust-shield': { x: 500, y: 250 },
-  'command-center': { x: 405, y: 200 },
-  storage: { x: 465, y: 170 },
-  communications: { x: 645, y: 300 },
-  workshop: { x: 255, y: 265 },
-  'pressurized-rover': { x: 515, y: 390 },
-  'drilling-tools': { x: 210, y: 330 },
-  'mass-spectrometer': { x: 275, y: 350 },
-  'robotics-unit': { x: 225, y: 205 },
-  'research-lab': { x: 320, y: 365 },
-  'medical-bay': { x: 350, y: 220 },
-  isru: { x: 145, y: 230 },
-  'life-support': { x: 445, y: 365 },
-  greenhouse: { x: 520, y: 350 },
-  moxie: { x: 180, y: 270 },
-  reactor: { x: 665, y: 195 },
-  'storm-shelter': BASE_MAP_SITES.protectedRidge,
-  'water-recycler': { x: 490, y: 360 },
-  expansion: { x: 575, y: 365 },
-}
+export const MAP_PIXELS_PER_100_METERS = 80
+export const MIN_MAP_BUILDING_CLEARANCE_PIXELS = 80
 
-const POWER_FACILITIES = new Set([
+const FACILITY_IDS = [
+  'landing-pad',
   'solar-panels',
   'battery',
-  'reactor',
+  'habitat',
+  'airlock',
+  'suitport',
+  'electrostatic-dust-shield',
   'command-center',
+  'storage',
   'communications',
-])
-const INDUSTRIAL_FACILITIES = new Set([
+  'workshop',
+  'pressurized-rover',
+  'drilling-tools',
+  'mass-spectrometer',
+  'robotics-unit',
+  'research-lab',
+  'medical-bay',
+  'isru',
+  'life-support',
+  'greenhouse',
+  'moxie',
+  'reactor',
+  'storm-shelter',
+  'water-recycler',
+  'expansion',
+] as const
+
+const POWER_FACILITIES = ['solar-panels', 'command-center', 'communications', 'reactor']
+const INDUSTRIAL_FACILITIES = [
   'workshop',
   'pressurized-rover',
   'drilling-tools',
@@ -55,28 +53,82 @@ const INDUSTRIAL_FACILITIES = new Set([
   'research-lab',
   'isru',
   'moxie',
+]
+const GRID_SITES: MapPoint[] = [60, 155, 250, 345, 440].flatMap((y) =>
+  [55, 200, 345, 490, 635, 770].map((x) => ({ x, y })),
+)
+
+function isClearOf(point: MapPoint, reserved: readonly MapPoint[]): boolean {
+  return reserved.every((site) =>
+    Math.hypot(point.x - site.x, point.y - site.y) >= MIN_MAP_BUILDING_CLEARANCE_PIXELS,
+  )
+}
+
+const sites = new Map<string, MapPoint>([
+  ['landing-pad', BASE_MAP_SITES.landingPad],
+  ['battery', BASE_MAP_SITES.battery],
+  ['storm-shelter', BASE_MAP_SITES.protectedRidge],
+  ['solar-panels', { x: 665, y: 90 }],
+  ['reactor', { x: 755, y: 175 }],
+  ['command-center', { x: 495, y: 280 }],
+  ['communications', { x: 500, y: 380 }],
+  ['greenhouse', { x: 405, y: 380 }],
+  ['medical-bay', { x: 315, y: 280 }],
+  ['isru', { x: 225, y: 380 }],
 ])
-
-export const MAP_PIXELS_PER_100_METERS = 80
-
-export function getFacilityMapPosition(id: string, index: number): MapPoint {
-  const knownPosition = FACILITY_MAP_SITES[id]
-  if (knownPosition) return knownPosition
-
-  let stableHash = 0
-  for (const character of id) stableHash = (stableHash * 31 + character.charCodeAt(0)) >>> 0
-  const angle = (stableHash % 360) * Math.PI / 180
-  const radius = 110 + (stableHash % 5) * 12
-  const offset = Math.max(0, index) * 9
-  return {
-    x: Math.max(45, Math.min(755, BASE_MAP_SITES.habitat.x + Math.cos(angle) * radius + offset)),
-    y: Math.max(45, Math.min(455, BASE_MAP_SITES.habitat.y + Math.sin(angle) * radius + offset)),
+const reservedSites = [
+  BASE_MAP_SITES.habitat,
+  BASE_MAP_SITES.battery,
+  BASE_MAP_SITES.protectedRidge,
+  BASE_MAP_SITES.landingPad,
+  BASE_MAP_SITES.rover,
+]
+const assignedGridSites: MapPoint[] = []
+for (const [id, point] of sites) {
+  if (id !== 'landing-pad' && id !== 'battery' && id !== 'storm-shelter') {
+    assignedGridSites.push(point)
   }
 }
 
+function assignFacilities(ids: readonly string[], allowedSite: (site: MapPoint) => boolean): void {
+  for (const id of ids) {
+    const site = GRID_SITES.find((candidate) =>
+      allowedSite(candidate) &&
+      !assignedGridSites.includes(candidate) &&
+      isClearOf(candidate, [...reservedSites, ...assignedGridSites]),
+    )
+    if (!site) throw new Error(`No collision-free map site is available for ${id}.`)
+    sites.set(id, site)
+    assignedGridSites.push(site)
+  }
+}
+
+assignFacilities(POWER_FACILITIES.filter((id) => !sites.has(id)), (site) => site.x >= 490)
+assignFacilities(INDUSTRIAL_FACILITIES.filter((id) => !sites.has(id)), (site) => site.x <= 345)
+assignFacilities(
+  FACILITY_IDS.filter((id) =>
+    id !== 'habitat' && !sites.has(id) && !POWER_FACILITIES.includes(id) && !INDUSTRIAL_FACILITIES.includes(id),
+  ),
+  () => true,
+)
+
+export const FACILITY_MAP_SITES: Record<string, MapPoint> = Object.fromEntries(
+  FACILITY_IDS.map((id) => {
+    const site = id === 'habitat' ? BASE_MAP_SITES.habitat : sites.get(id)
+    if (!site) throw new Error(`Map site is missing for ${id}.`)
+    return [id, site]
+  }),
+)
+
+export function getFacilityMapPosition(id: string): MapPoint {
+  const site = FACILITY_MAP_SITES[id]
+  if (!site) throw new RangeError(`Unknown facility map site: ${id}.`)
+  return site
+}
+
 export function getFacilityNetworkOrigin(id: string): MapPoint {
-  if (POWER_FACILITIES.has(id)) return BASE_MAP_SITES.battery
-  if (INDUSTRIAL_FACILITIES.has(id)) return BASE_MAP_SITES.industrialHub
+  if (POWER_FACILITIES.includes(id)) return BASE_MAP_SITES.battery
+  if (INDUSTRIAL_FACILITIES.includes(id)) return BASE_MAP_SITES.industrialHub
   return BASE_MAP_SITES.habitat
 }
 

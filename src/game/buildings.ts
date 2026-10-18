@@ -19,6 +19,15 @@ export interface BuildingDefinition {
   destination?: 'moon' | 'mars'
 }
 
+const CONSTRUCTION_HOURS: Record<string, { moon: number; mars: number }> = {
+  habitat: { moon: 24, mars: 48 },
+  'solar-panels': { moon: 3, mars: 3 },
+  reactor: { moon: 8, mars: 8 },
+  battery: { moon: 4, mars: 4 },
+  isru: { moon: 28, mars: 36 },
+  greenhouse: { moon: 18, mars: 18 },
+}
+
 export const BUILDINGS: Record<string, BuildingDefinition> = {
   'landing-pad': {
     id: 'landing-pad', icon: '🛬', name: { ar: 'منصة هبوط', en: 'Landing pad' },
@@ -27,7 +36,7 @@ export const BUILDINGS: Record<string, BuildingDefinition> = {
   },
   'solar-panels': {
     id: 'solar-panels', icon: '☀️', name: { ar: 'ألواح شمسية', en: 'Solar panels' },
-    description: { ar: 'قدرة اسمية تقريبية 15 kW على القمر و7 kW على المريخ؛ تتوقف أثناء الليل القمري.', en: 'Approximate nameplate output is 15 kW on the Moon and 7 kW on Mars; lunar-night output is zero.' },
+    description: { ar: 'قدرة اسمية 15 kW على القمر و7 kW على المريخ؛ تتوقف أثناء الليل القمري الطويل.', en: '15 kW nameplate output on the Moon and 7 kW on Mars; lunar-night generation is zero.' },
     phase: 1, cost: 50, cargo: 10, energyCost: 0, area: 2, production: { energy: 15 }, consumption: {},
   },
   battery: {
@@ -37,7 +46,7 @@ export const BUILDINGS: Record<string, BuildingDefinition> = {
   },
   habitat: {
     id: 'habitat', icon: '🏠', name: { ar: 'وحدة السكن', en: 'Habitat' },
-    description: { ar: 'موئل مضغوط لحماية الطاقم وتوفير بيئة قابلة للسكن.', en: 'Pressurized crew quarters providing a protected, habitable environment.' },
+    description: { ar: 'موئل مضغوط لحماية الطاقم؛ حمل التشغيل النموذجي 15 kW.', en: 'Pressurized crew quarters; modeled operating load is 15 kW.' },
     phase: 1, cost: 75, cargo: 14, energyCost: 0, area: 5, production: {}, consumption: {},
   },
   airlock: {
@@ -107,7 +116,7 @@ export const BUILDINGS: Record<string, BuildingDefinition> = {
   },
   isru: {
     id: 'isru', icon: '🪨', name: { ar: 'استخدام الموارد المحلية', en: 'ISRU plant' },
-    description: { ar: `وحدة تعليمية تعمل بالطاقة لمعالجة الموارد المحلية؛ تنتج ${ISRU_DAILY_OUTPUT.waterLiters} لتر ماء و${ISRU_DAILY_OUTPUT.oxygenKg} كغ أكسجين يوميًا.`, en: `A powered local-resource processor producing ${ISRU_DAILY_OUTPUT.waterLiters} L water and ${ISRU_DAILY_OUTPUT.oxygenKg} kg oxygen per modeled day.` },
+    description: { ar: `وحدة معالجة بقدرة 35 kW؛ تنتج ${ISRU_DAILY_OUTPUT.waterLiters} لتر ماء و${ISRU_DAILY_OUTPUT.oxygenKg} كغ أكسجين يوميًا في النموذج.`, en: `A 35 kW local-resource processor producing ${ISRU_DAILY_OUTPUT.waterLiters} L water and ${ISRU_DAILY_OUTPUT.oxygenKg} kg oxygen per modeled day.` },
     phase: 3, cost: 100, cargo: 18, energyCost: 5, area: 4, production: { water: ISRU_DAILY_OUTPUT.waterLiters, oxygen: ISRU_DAILY_OUTPUT.oxygenKg }, consumption: { energy: dailyPowerUse('isru') },
   },
   'life-support': {
@@ -117,7 +126,7 @@ export const BUILDINGS: Record<string, BuildingDefinition> = {
   },
   greenhouse: {
     id: 'greenhouse', icon: '🌱', name: { ar: 'دفيئة زراعية', en: 'Greenhouse' },
-    description: { ar: `تنتج ${GREENHOUSE_CYCLE.foodKg} كغ غذاء و${GREENHOUSE_CYCLE.oxygenKg} كغ أكسجين خلال ${GREENHOUSE_CYCLE.growthDays} أيام تشغيل، مع استهلاك الماء والطاقة.`, en: `Produces ${GREENHOUSE_CYCLE.foodKg} kg food and ${GREENHOUSE_CYCLE.oxygenKg} kg oxygen over ${GREENHOUSE_CYCLE.growthDays} powered days, consuming water and electricity.` },
+    description: { ar: `حملها 20 kW؛ تنتج ${GREENHOUSE_CYCLE.foodKg} كغ غذاء و${GREENHOUSE_CYCLE.oxygenKg} كغ أكسجين خلال ${GREENHOUSE_CYCLE.growthDays} أيام تشغيل.`, en: `20 kW operating load; produces ${GREENHOUSE_CYCLE.foodKg} kg food and ${GREENHOUSE_CYCLE.oxygenKg} kg oxygen over ${GREENHOUSE_CYCLE.growthDays} powered days.` },
     phase: 4, cost: 90, cargo: 18, energyCost: 7, area: 4, production: {}, consumption: { energy: dailyPowerUse('greenhouse'), water: GREENHOUSE_CYCLE.waterLitersPerDay },
   },
   moxie: {
@@ -145,6 +154,12 @@ export const BUILDINGS: Record<string, BuildingDefinition> = {
     description: { ar: 'تضيف مساحة للبنية التحتية المستقبلية.', en: 'Adds space for future base infrastructure.' },
     phase: 4, cost: 120, cargo: 24, energyCost: 4, area: 6, production: {}, consumption: { energy: dailyPowerUse('expansion') },
   },
+}
+
+export function getConstructionDurationHours(buildingId: string, destination: 'moon' | 'mars'): number {
+  const building = BUILDINGS[buildingId]
+  if (!building) throw new RangeError(`Unknown building: ${buildingId}`)
+  return CONSTRUCTION_HOURS[buildingId]?.[destination] ?? Math.max(4, building.area * 6)
 }
 
 export const BUILDING_PHASES = [

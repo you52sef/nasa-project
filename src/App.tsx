@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import ar from './i18n/ar'
 import en from './i18n/en'
 import { useGameStore } from './store/gameStore'
@@ -12,6 +13,10 @@ export default function App() {
   const language = useSettingsStore((state) => state.language)
   const t = language === 'ar' ? ar : en
   const { playClick } = useSound()
+  useEffect(() => {
+    document.documentElement.lang = language
+    document.documentElement.dir = language === 'ar' ? 'rtl' : 'ltr'
+  }, [language])
   return (
     <div
       lang={language}

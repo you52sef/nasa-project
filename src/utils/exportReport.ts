@@ -21,6 +21,7 @@ export async function downloadMissionReport(state: GameState, language: 'ar' | '
         report: 'تقرير المهمة',
         result: 'النتيجة',
         success: 'اكتملت المهمة بنجاح',
+        failure: 'عاد الطاقم دون إكمال هدف المهمة',
         evacuation: 'تم إجلاء الطاقم',
         ended: 'انتهت المهمة مبكرًا',
         endedNote: 'أنهى قائد المهمة التشغيل قبل اكتمال جميع الدورات.',
@@ -73,6 +74,7 @@ export async function downloadMissionReport(state: GameState, language: 'ar' | '
         report: 'Mission report',
         result: 'Result',
         success: 'Mission completed successfully',
+        failure: 'Mission objective incomplete',
         evacuation: 'Crew evacuated',
         ended: 'Mission ended early',
         endedNote: 'The mission commander ended operations before all cycles were completed.',
@@ -125,6 +127,8 @@ export async function downloadMissionReport(state: GameState, language: 'ar' | '
   const planet = state.destination === 'moon' ? (isArabic ? 'القمر' : 'Moon') : (isArabic ? 'المريخ' : 'Mars')
   const missionResult = state.missionResult === 'success'
     ? labels.success
+    : state.missionResult === 'failure'
+      ? labels.failure
     : state.missionResult === 'ended'
       ? labels.ended
       : labels.evacuation

@@ -20,6 +20,7 @@ export function SurvivalSystems({ state }: { state: GameState }) {
     state.difficulty,
     state.buildings.includes('water-recycler') && !(state.offlineBuildings || []).includes('water-recycler'),
     state.buildings.includes('life-support') && !(state.offlineBuildings || []).includes('life-support'),
+    state.destination,
   )
   const lunarNight = state.destination === 'moon' && isLunarNight(state.day)
   const dayRoutine = getCrewDailyRoutine(state.destination)

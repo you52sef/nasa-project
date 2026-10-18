@@ -1,11 +1,15 @@
-import type { ControlMode, CrewRole, Destination, GameState, MissionDifficulty, MissionMode, MissionObjective } from '../game/model'
+import type { ControlMode, CrewRole, Destination, GameState, MissionDifficulty, MissionMode, MissionObjective, MissionType } from '../game/model'
 import type { ScenarioId } from '../game/scenarios'
 import { CREW_ROSTERS } from '../game/crewRosters'
 
 const SAVE_KEY = 'little-orbit-save-v1'
 const SETUP_KEY = 'little-orbit-setup-v1'
 
-export type MissionSetup = Pick<GameState, 'destination' | 'crewSize' | 'maxDays' | 'difficulty' | 'objective' | 'missionSeed' | 'scenario' | 'missionMode' | 'controlMode' | 'controlledRole'>
+export type MissionSetup = Omit<Pick<GameState, 'destination' | 'crewSize' | 'maxDays' | 'missionType' | 'difficulty' | 'objective' | 'missionSeed' | 'scenario' | 'missionMode' | 'controlMode' | 'controlledRole' | 'controlledDutyId'>, 'missionType'> & {
+  missionType?: MissionType
+  astronautName?: string
+  astronautDutyId?: string
+}
 
 function isDestination(value: unknown): value is Destination {
   return value === 'moon' || value === 'mars'
@@ -17,6 +21,11 @@ function isDifficulty(value: unknown): value is MissionDifficulty {
 
 function isObjective(value: unknown): value is MissionObjective {
   return value === 'survival' || value === 'science' || value === 'exploration' || value === 'tutorial'
+}
+
+function isMissionType(value: unknown): value is MissionType {
+  return value === 'moon-exploration' || value === 'moon-settlement' ||
+    value === 'mars-opposition' || value === 'mars-conjunction'
 }
 
 function isMissionMode(value: unknown): value is MissionMode {
@@ -46,12 +55,16 @@ export function loadMissionSetup(): Partial<MissionSetup> {
     return {
       ...(isDestination(value.destination) ? { destination: value.destination } : {}),
       ...(typeof value.crewSize === 'number' && CREW_ROSTERS.some((roster) => roster.crewSize === value.crewSize) ? { crewSize: value.crewSize } : {}),
-      ...(typeof value.maxDays === 'number' && [10, 30, 60].includes(value.maxDays) ? { maxDays: value.maxDays } : {}),
+      ...(typeof value.maxDays === 'number' && [10, 30, 60, 180].includes(value.maxDays) ? { maxDays: value.maxDays } : {}),
+      ...(isMissionType(value.missionType) ? { missionType: value.missionType } : {}),
       ...(isDifficulty(value.difficulty) ? { difficulty: value.difficulty } : {}),
       ...(isObjective(value.objective) ? { objective: value.objective } : {}),
       ...(isMissionMode(value.missionMode) ? { missionMode: value.missionMode } : {}),
       ...(isControlMode(value.controlMode) ? { controlMode: value.controlMode } : {}),
       ...(isCrewRole(value.controlledRole) ? { controlledRole: value.controlledRole } : {}),
+      ...(typeof value.controlledDutyId === 'string' ? { controlledDutyId: value.controlledDutyId } : {}),
+      ...(typeof value.astronautName === 'string' ? { astronautName: value.astronautName.slice(0, 40) } : {}),
+      ...(typeof value.astronautDutyId === 'string' ? { astronautDutyId: value.astronautDutyId } : {}),
       ...(isScenario(value.scenario) ? { scenario: value.scenario } : {}),
       ...(typeof value.missionSeed === 'number' && Number.isInteger(value.missionSeed) && value.missionSeed >= 0 && value.missionSeed <= 0xffff_ffff
         ? { missionSeed: value.missionSeed }

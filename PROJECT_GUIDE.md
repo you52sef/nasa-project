@@ -68,12 +68,12 @@ Events, expeditions, and efficient-profile transit disturbances are reproducible
 
 ### Crew roles and team decisions
 
-- **Commander**: mission objectives and crew safety.
-- **Power engineer**: energy budget and facility loads.
-- **Biologist**: food production and crew health.
-- **Water officer**: water reserves, recycling, and leaks.
+- **Commander/Pilot**: flight decisions, mission directives, and command-authorized rescue operations.
+- **Systems engineer**: power, facility infrastructure, structural maintenance, and system repair.
+- **Biologist/Doctor**: life support, oxygen and water recycling, crops, and crew health.
+- **Geologist/Specialist**: surface exploration, rover operations, mining, and soil analysis.
 
-The crew council shows localized, threshold-based resource advice from each role and suggests an action from a deterministic rule set. Full-control players make all activity choices. In specialist mode, other crew members receive one rule-selected support activity per day while the player is restricted to the selected role; the player still makes consequential event and transit choices. The debrief counts recorded actions and event responses; it does not model hidden player intent or claim to predict behavior. This is an on-device team exercise, not online multiplayer.
+The mission panels and action handlers use the same role-to-specialization mapping; unauthorized commands are rejected in the simulation engine. Individual crew health, fatigue, stress, and morale are bounded and saved. Personality traits are derived deterministically from the mission seed and crew identity, and role efficiency affects autonomous task success and specialist-managed system output. Unselected crew perform a role-aligned daily task or recover when unavailable. Full-control players make activity choices; specialist mode restricts activities to the selected astronaut's role while other crew continue their autonomous routine. The debrief counts recorded actions and event responses; it does not model hidden player intent or claim to predict behavior. This is an on-device team exercise, not online multiplayer.
 
 ### Resource System
 
@@ -86,7 +86,7 @@ Resource stores are displayed in kWh, kg, and L. These are educational game para
 - **Crew routine:** 1.5 h preparation/briefing, 2.5 h exercise, two 3.5 h shifts, 1 h lunch/rest, 1 h health check, 2.5 h dinner/personal/family communication, 0.5 h emergency buffer, and 8 h sleep. Mars adds 39 minutes to personal time for a 24 h 39 min sol.
 - Facility outputs are reduced proportionally when available stored and generated energy cannot meet modeled crew, facility, and scheduled-activity demand.
 - **MOXIE:** the game models a small demonstration unit at 0.24 kg oxygen/day and 6 kWh/day, not a full crew-scale oxygen plant.
-- **Radiation and hazards:** The model uses 1.84 mSv/day in transit and 0.64 mSv/day on Mars surface; shelter shielding and a 600 mSv warning are simplified game mechanics, not dosimetry or a universal/current NASA career exposure limit. Mars dust storms reduce solar output by 80–95% for 3–5 days. Lunar night is modeled at -173°C. Regolith dust mitigation requires a suitport plus an online EDS.
+- **Radiation and hazards:** The model uses 1.84 mSv/day in transit and 0.64 mSv/day on Mars surface; these dose rates, shelter shielding, and the 600 mSv cumulative warning threshold are simplified game mechanics, not dosimetry or health predictions. The 600 mSv value is not a NASA exposure limit. [NASA notes](https://www.nasa.gov/directorates/esdmd/hhp/space-radiation/) that there is insufficient knowledge to recommend exposure limits for long-duration missions. Mars dust storms reduce solar output by 80–95% for 3–5 days. Lunar night is modeled at -173°C. Regolith dust mitigation requires a suitport plus an online EDS.
 - **Crew health, readiness, radiation exposure, events, and mission days** remain training mechanics, not medical or operational predictions. Orbital estimates use ideal two-body/Hohmann assumptions, omit real launch windows and perturbations, and do not drive campaign duration or transit resource use.
 
 Construction dependency phases gate expansion: Phase 1 (landing pad, solar, battery, habitat, airlock, shelter), Phase 2 (command, storage, communications), Phase 3 (workshop, lab, clinic, ISRU), and Phase 4 (reactor, greenhouse, expansions). Survival Mode pauses productive facilities and holds critical loads at 27 kW: habitat 15 kW, command 6 kW, communications 3 kW, airlock 2 kW, storage 1 kW. Radiation and resource figures are game parameters; consult the project’s model disclosures and NASA references for the limitations of the educational estimates.

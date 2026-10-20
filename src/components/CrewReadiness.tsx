@@ -1,6 +1,8 @@
-import { Activity, HeartPulse } from 'lucide-react'
+import { Activity, BatteryLow, HeartPulse, Radiation, UserRound } from 'lucide-react'
+import type { ReactNode } from 'react'
 import type { GameState } from '../game/model'
 import { forecastRadiationExposure, getExplorationRisk } from '../game/model'
+import { ENVIRONMENT } from '../game/constants'
 import ar from '../i18n/ar'
 import en from '../i18n/en'
 
@@ -9,7 +11,7 @@ export function CrewReadiness({ state, language }: { state: GameState; language:
   const t = arabic ? ar : en
   const risk = Math.round(getExplorationRisk(state) * 100)
   const nextRadiation = forecastRadiationExposure(state)
-  const radiationPercent = Math.min(100, nextRadiation / 600 * 100)
+  const radiationPercent = Math.min(100, nextRadiation / ENVIRONMENT.gameRadiationWarningThresholdMsv * 100)
   const status = state.fatigue >= 75 || state.morale <= 30
     ? t.restRecommendedLabel
     : t.crewReadyLabel
@@ -27,23 +29,23 @@ export function CrewReadiness({ state, language }: { state: GameState; language:
         <ReadinessMeter
           label={arabic ? 'الإرهاق' : 'Fatigue'}
           value={state.fatigue}
-          icon="🪫"
+          icon={<BatteryLow size={14} aria-hidden="true" />}
           language={language}
           inverted
         />
         <ReadinessMeter
           label={arabic ? 'المعنويات' : 'Morale'}
           value={state.morale}
-          icon="🧑‍🚀"
+          icon={<UserRound size={14} aria-hidden="true" />}
           language={language}
         />
         <div className="rounded-xl border border-white/[0.05] bg-white/[0.02] p-3">
           <div className="flex items-center justify-between gap-2 text-xs">
-            <span className="font-semibold text-slate-300">☢️ {t.cumulativeRadiationLabel}</span>
-            <b className={nextRadiation >= 600 ? 'text-rose-200' : nextRadiation >= 400 ? 'text-amber-200' : 'text-slate-100'}>{nextRadiation.toFixed(1)} mSv / 600</b>
+            <span className="font-semibold text-slate-300"><Radiation size={14} className="me-1.5 inline text-amber-200" aria-hidden="true" />{t.cumulativeRadiationLabel}</span>
+            <b className={nextRadiation >= ENVIRONMENT.gameRadiationWarningThresholdMsv ? 'text-rose-200' : nextRadiation >= ENVIRONMENT.gameRadiationWarningThresholdMsv * 2 / 3 ? 'text-amber-200' : 'text-slate-100'}>{nextRadiation.toFixed(1)} mSv / {ENVIRONMENT.gameRadiationWarningThresholdMsv}</b>
           </div>
           <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/[0.07]">
-            <div className={`h-full rounded-full transition-[width] ${nextRadiation >= 600 ? 'bg-rose-400' : nextRadiation >= 400 ? 'bg-amber-300' : 'bg-sky-300'}`} style={{ width: `${radiationPercent}%` }} />
+            <div className={`block h-full w-full origin-left rounded-full transition-transform ${nextRadiation >= ENVIRONMENT.gameRadiationWarningThresholdMsv ? 'bg-rose-400' : nextRadiation >= ENVIRONMENT.gameRadiationWarningThresholdMsv * 2 / 3 ? 'bg-amber-300' : 'bg-sky-300'}`} style={{ transform: `scaleX(${radiationPercent / 100})`, transformOrigin: arabic ? 'right' : 'left' }} />
           </div>
           <p className="mt-2 text-[10px] leading-relaxed text-slate-500">
             {t.radiationTrainingNote}
@@ -55,7 +57,7 @@ export function CrewReadiness({ state, language }: { state: GameState; language:
             <b className={risk >= 55 ? 'text-amber-200' : 'text-slate-100'}>{risk}%</b>
           </div>
           <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/[0.07]">
-            <div className={`h-full rounded-full transition-[width] ${risk >= 55 ? 'bg-amber-400' : 'bg-sky-300'}`} style={{ width: `${risk}%` }} />
+            <div className={`block h-full w-full origin-left rounded-full transition-transform ${risk >= 55 ? 'bg-amber-400' : 'bg-sky-300'}`} style={{ transform: `scaleX(${risk / 100})`, transformOrigin: arabic ? 'right' : 'left' }} />
           </div>
           <p className="mt-2 text-[10px] leading-relaxed text-slate-500">
             {t.evaRiskNote}
@@ -75,7 +77,7 @@ function ReadinessMeter({
 }: {
   label: string
   value: number
-  icon: string
+  icon: ReactNode
   language: 'ar' | 'en'
   inverted?: boolean
 }) {
@@ -88,7 +90,7 @@ function ReadinessMeter({
         <b className="text-slate-100">{Math.round(value)}%</b>
       </div>
       <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/[0.07]">
-        <div className={`h-full rounded-full transition-[width] ${tone}`} style={{ width: `${Math.max(0, Math.min(100, level))}%` }} />
+        <div className={`block h-full w-full origin-left rounded-full transition-transform ${tone}`} style={{ transform: `scaleX(${Math.max(0, Math.min(100, level)) / 100})`, transformOrigin: language === 'ar' ? 'right' : 'left' }} />
       </div>
       <p className="mt-2 text-[10px] text-slate-600">{language === 'ar' ? ar.saveEstimateLabel : en.saveEstimateLabel}</p>
     </div>

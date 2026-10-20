@@ -1,34 +1,34 @@
 import type { Action, CrewCommunicationReason, CrewCommunicationRecord, CrewRole, Destination, GameState } from './model'
 import type { EventDefinition } from './events'
 import { EVENTS } from './events'
-import { CREW_DUTIES, getCrewAssignmentById, localizeCrewRole, type CrewAssignment } from './crewRosters'
-import { canPerformActivity, deterministicRoll, getActivityResourceCost, getEnergyCapacity, getExplorationRisk, getMarsCommunicationDelayMinutes } from './model'
+import { CREW_DUTIES, getCrewAssignmentById, getMissionSpecialization, localizeCrewRole, type CrewAssignment, type CrewSpecialty } from './crewRosters'
+import { canPerformActivity, deterministicRoll, getActivityResourceCost, getControlledMissionSpecialization, getCrewCondition, getCrewPersonality, getEnergyCapacity, getExplorationRisk, getMarsCommunicationDelayMinutes, getRoleIneligibleMessage, getSupplyCapacity, isCrewMemberAvailable } from './model'
 import { canChooseEventOption } from './events'
 import { getCrewRoster } from './crewRosters'
 
 export const CREW_ROLES: readonly {
   id: CrewRole
-  title: 'roleCommander' | 'rolePowerEngineer' | 'roleBiologist' | 'roleWaterOfficer'
-  focus: 'roleCommanderFocus' | 'rolePowerEngineerFocus' | 'roleBiologistFocus' | 'roleWaterOfficerFocus'
+  title: 'roleCommander' | 'rolePowerEngineer' | 'roleBiologist' | 'roleGeologist'
+  focus: 'roleCommanderFocus' | 'rolePowerEngineerFocus' | 'roleBiologistFocus' | 'roleGeologistFocus'
   icon: string
 }[] = [
   { id: 'commander', title: 'roleCommander', focus: 'roleCommanderFocus', icon: '🧭' },
   { id: 'power-engineer', title: 'rolePowerEngineer', focus: 'rolePowerEngineerFocus', icon: '⚡' },
   { id: 'biologist', title: 'roleBiologist', focus: 'roleBiologistFocus', icon: '🧬' },
-  { id: 'water-officer', title: 'roleWaterOfficer', focus: 'roleWaterOfficerFocus', icon: '💧' },
+  { id: 'water-officer', title: 'roleGeologist', focus: 'roleGeologistFocus', icon: '🪨' },
 ]
 
 const ROLE_SPECIALTIES: Record<CrewRole, readonly CrewAssignment['specialty'][]> = {
   commander: ['command', 'pilot'],
   'power-engineer': ['engineering', 'power', 'robotics', 'communications', 'engineering-science'],
-  biologist: ['science', 'medical', 'agriculture', 'science-medical', 'engineering-science', 'geology-agriculture'],
-  'water-officer': ['resources', 'agriculture-resources'],
+  biologist: ['medical', 'agriculture', 'agriculture-resources', 'science-medical'],
+  'water-officer': ['science', 'resources', 'geology-agriculture'],
 }
 
 const SPECIALTY_CONTROL_ROLE: Record<CrewAssignment['specialty'], CrewRole> = {
   command: 'commander',
   pilot: 'commander',
-  science: 'biologist',
+  science: 'water-officer',
   medical: 'biologist',
   engineering: 'power-engineer',
   communications: 'power-engineer',
@@ -36,10 +36,10 @@ const SPECIALTY_CONTROL_ROLE: Record<CrewAssignment['specialty'], CrewRole> = {
   resources: 'water-officer',
   robotics: 'power-engineer',
   agriculture: 'biologist',
-  'agriculture-resources': 'water-officer',
+  'agriculture-resources': 'biologist',
   'science-medical': 'biologist',
   'engineering-science': 'power-engineer',
-  'geology-agriculture': 'biologist',
+  'geology-agriculture': 'water-officer',
 }
 
 export function getAvailableCrewRoles(crewSize: number, destination?: Destination, maxDays?: number) {
@@ -52,78 +52,62 @@ export function getAvailableCrewRoles(crewSize: number, destination?: Destinatio
   return CREW_ROLES.filter((role) => ROLE_SPECIALTIES[role.id].some((specialty) => specialties.has(specialty)))
 }
 
-export function getMissionCrewAssignments(crewSize: number, destination: Destination, maxDays: number) {
+export function getCommandRoleForSpecialty(specialty: CrewSpecialty): CrewRole {
+  return SPECIALTY_CONTROL_ROLE[specialty]
+}
+
+export function getMissionCrewAssignments(
+  crewSize: number,
+  destination: Destination,
+  maxDays: number,
+  specialtyOverrides: Readonly<Record<string, CrewSpecialty>> = {},
+) {
   const roster = getCrewRoster(destination, maxDays, crewSize)
   if (!roster) return []
   return roster.assignments.flatMap((assignment) => {
     const duties = CREW_DUTIES[assignment.title]
     if (!duties) throw new Error(`Missing mission duty for crew assignment "${assignment.title}".`)
     const slug = assignment.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')
-    return Array.from({ length: assignment.count }, (_, index) => ({
-      id: `${slug}-${index + 1}`,
-      title: assignment.count > 1 ? `${assignment.title} ${index + 1}` : assignment.title,
-      duty: duties[Math.min(index, duties.length - 1)],
-      specialty: assignment.specialty,
-      controlRole: SPECIALTY_CONTROL_ROLE[assignment.specialty],
-    }))
+    return Array.from({ length: assignment.count }, (_, index) => {
+      const id = `${slug}-${index + 1}`
+      const specialty = specialtyOverrides[id] || assignment.specialty
+      return {
+        id,
+        title: assignment.count > 1 ? `${assignment.title} ${index + 1}` : assignment.title,
+        duty: duties[Math.min(index, duties.length - 1)],
+        specialty,
+        controlRole: SPECIALTY_CONTROL_ROLE[specialty],
+      }
+    })
   })
 }
 
 export type MissionPanelId = 'resources' | 'crew' | 'systems' | 'operations' | 'infrastructure' | 'forecast' | 'communications'
 
-const SPECIALTY_PANELS: Record<CrewAssignment['specialty'], readonly MissionPanelId[]> = {
-  command: ['resources', 'crew', 'operations', 'forecast'],
-  pilot: ['resources', 'crew', 'operations', 'forecast'],
-  science: ['resources', 'crew', 'operations', 'forecast'],
-  medical: ['resources', 'crew', 'systems', 'operations', 'forecast'],
-  engineering: ['resources', 'systems', 'operations', 'infrastructure', 'forecast'],
-  communications: ['resources', 'systems', 'operations', 'forecast'],
-  power: ['resources', 'systems', 'operations', 'infrastructure', 'forecast'],
-  resources: ['resources', 'systems', 'operations', 'infrastructure', 'forecast'],
-  robotics: ['resources', 'systems', 'operations', 'infrastructure', 'forecast'],
-  agriculture: ['resources', 'operations', 'forecast'],
-  'agriculture-resources': ['resources', 'systems', 'operations', 'infrastructure', 'forecast'],
-  'science-medical': ['resources', 'crew', 'operations', 'forecast'],
-  'engineering-science': ['resources', 'crew', 'systems', 'operations', 'infrastructure', 'forecast'],
-  'geology-agriculture': ['resources', 'crew', 'operations', 'forecast'],
+const SPECIALIZATION_PANELS: Record<'command' | 'engineering' | 'biology' | 'geology', readonly MissionPanelId[]> = {
+  command: ['resources', 'crew', 'systems', 'forecast', 'communications', 'operations'],
+  engineering: ['resources', 'crew', 'systems', 'operations', 'infrastructure'],
+  biology: ['resources', 'crew', 'systems', 'operations'],
+  geology: ['resources', 'crew', 'operations', 'forecast'],
 }
 
 export function getAccessibleMissionPanels(state: GameState): readonly MissionPanelId[] {
-  if (state.controlMode !== 'specialist') {
-    return ['resources', 'crew', 'systems', 'operations', 'infrastructure', 'forecast', 'communications']
-  }
-  const duty = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays)
-    .find((assignment) => assignment.id === state.controlledDutyId)
-  return duty ? [...SPECIALTY_PANELS[duty.specialty], 'communications'] : ['resources', 'forecast', 'communications']
+  const accessible = getControlledMissionSpecialization(state)
+  if (!accessible || !isCrewMemberAvailable(state, state.controlledDutyId)) return ['resources', 'crew']
+  return SPECIALIZATION_PANELS[accessible]
 }
 
 export function getAllowedSpecialistActions(state: GameState): readonly Action[] {
-  if (state.controlMode !== 'specialist') return ['research', 'explore', 'maintenance', 'exercise', 'rest']
   return (['research', 'explore', 'maintenance', 'exercise', 'rest'] as const)
     .filter((action) => canPerformActivity(state, action))
-}
-
-const SPECIALTY_REQUEST_ACTIONS: Record<CrewAssignment['specialty'], readonly Action[]> = {
-  command: ['explore', 'maintenance'],
-  pilot: ['explore', 'maintenance'],
-  science: ['research', 'explore'],
-  medical: ['research', 'maintenance'],
-  engineering: ['maintenance', 'research'],
-  communications: ['maintenance', 'research'],
-  power: ['maintenance', 'research'],
-  resources: ['maintenance', 'research'],
-  robotics: ['maintenance', 'research'],
-  agriculture: ['research', 'maintenance'],
-  'agriculture-resources': ['research', 'maintenance'],
-  'science-medical': ['research', 'maintenance'],
-  'engineering-science': ['maintenance', 'research', 'explore'],
-  'geology-agriculture': ['research', 'explore'],
 }
 
 export type CrewRequestReason = CrewCommunicationReason
 
 const CREW_REQUEST_REPLIES: Record<CrewRequestReason, { en: string; ar: string }> = {
   requestAccepted: { en: 'The request was accepted and completed.', ar: 'قُبل الطلب ونُفّذ.' },
+  commandAuthorityRequired: { en: 'Only the Commander or Pilot may dispatch crew directives.', ar: 'يحق للقائد أو الطيار فقط إصدار تكليفات الطاقم.' },
+  selfConversation: { en: 'A crewmember cannot send a request to themselves.', ar: 'لا يمكن لفرد الطاقم إرسال طلب إلى نفسه.' },
   specialtyMismatch: { en: 'This request falls outside the crewmember’s assigned specialty.', ar: 'يقع هذا الطلب خارج نطاق تخصص فرد الطاقم.' },
   emergencyPriority: { en: 'An active emergency takes priority over secondary requests.', ar: 'الأولوية للاستجابة للطوارئ النشطة، لا للطلبات الثانوية.' },
   crewFatigue: { en: 'The crewmember is too fatigued for this activity.', ar: 'إرهاق فرد الطاقم مرتفع ولا يسمح بهذا النشاط.' },
@@ -142,12 +126,12 @@ const CREW_ACTION_LABELS: Record<Action, { en: string; ar: string }> = {
 }
 
 export function getCrewRequestActions(state: GameState, dutyId: string): readonly Action[] {
-  const duty = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays)
+  const duty = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays, state.crewSpecialtyOverrides)
     .find((assignment) => assignment.id === dutyId)
-  if (!duty) return []
-  const actions = SPECIALTY_REQUEST_ACTIONS[duty.specialty]
-  if (state.fatigue >= 70) return [...actions, 'rest']
-  return actions
+  if (!duty || duty.id === state.controlledDutyId || getControlledMissionSpecialization(state) !== 'command') return []
+  const targetState = { ...state, controlledDutyId: duty.id, controlledRole: duty.controlRole }
+  return (['research', 'explore', 'maintenance', 'exercise', 'rest'] as const)
+    .filter((action) => canPerformActivity(targetState, action))
 }
 
 export function evaluateCrewRequest(
@@ -155,24 +139,29 @@ export function evaluateCrewRequest(
   dutyId: string,
   action: Action,
 ): CrewRequestReason {
-  const duty = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays)
+  const duty = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays, state.crewSpecialtyOverrides)
     .find((assignment) => assignment.id === dutyId)
   if (!duty) throw new Error(`Crew request target "${dutyId}" is unavailable for this mission.`)
+  if (duty.id === state.controlledDutyId) return 'selfConversation'
+  if (getControlledMissionSpecialization(state) !== 'command') return 'commandAuthorityRequired'
+  const targetState = { ...state, controlledDutyId: duty.id, controlledRole: duty.controlRole }
   const handledToday = state.crewCommunications.some((request) =>
     request.day === state.day && request.dutyId === dutyId && request.action === action && request.decision === 'accepted',
   )
   if (handledToday) return 'requestAlreadyHandled'
-  if (!SPECIALTY_REQUEST_ACTIONS[duty.specialty].includes(action) && action !== 'rest') return 'specialtyMismatch'
+  if (getRoleIneligibleMessage(targetState, action)) return 'specialtyMismatch'
+  const condition = getCrewCondition(state, dutyId)
+  if ((condition.health <= 20 || condition.fatigue >= 90 || condition.stress >= 90) && action !== 'rest') return 'crewFatigue'
+  if (!canPerformActivity(targetState, action)) return 'specialtyMismatch'
   if (state.activeEvent) return 'emergencyPriority'
   if (state.ongoingLeak || state.emergencyLevel > 0 || state.oxygenEmergencyHoursRemaining !== null) {
     if (action !== 'maintenance') return 'emergencyPriority'
-    const canRepairSystems = ['engineering', 'power', 'robotics', 'resources', 'engineering-science', 'agriculture-resources'].includes(duty.specialty)
-    const canRespondMedically = ['medical', 'science-medical'].includes(duty.specialty)
-    if (state.emergencyLevel === 4 ? !canRespondMedically : !canRepairSystems) return 'emergencyPriority'
+    const requiredSpecialization = state.emergencyLevel === 4 || (state.emergencyLevel === 0 && state.ongoingLeak)
+      ? 'biology'
+      : 'engineering'
+    if (getMissionSpecialization(duty.specialty) !== requiredSpecialization) return 'emergencyPriority'
   }
   if (state.activeOperation?.status === 'active' || state.constructionProject) return 'crewBusy'
-  if (state.fatigue >= 90 && action !== 'rest') return 'crewFatigue'
-
   const cost = getActivityResourceCost(action, state.difficulty)
   if ((cost.energy || 0) > state.resources.energy) return 'energyInsufficient'
   if ((cost.oxygen || 0) > state.resources.oxygen) return 'oxygenInsufficient'
@@ -181,9 +170,21 @@ export function evaluateCrewRequest(
 
 export function respondToCrewRequest(state: GameState, dutyId: string, action: Action, language: 'ar' | 'en'): GameState {
   if (!state.started || state.paused || state.isGameOver || state.missionPhase !== 'surface') return state
-  const duty = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays)
+  const duty = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays, state.crewSpecialtyOverrides)
     .find((assignment) => assignment.id === dutyId)
   if (!duty) throw new Error(`Crew request target "${dutyId}" is unavailable for this mission.`)
+  if (duty.id === state.controlledDutyId) {
+    return {
+      ...state,
+      lastMessage: CREW_REQUEST_REPLIES.selfConversation[language],
+    }
+  }
+  if (getControlledMissionSpecialization(state) !== 'command') {
+    return {
+      ...state,
+      lastMessage: CREW_REQUEST_REPLIES.commandAuthorityRequired[language],
+    }
+  }
   const decision = evaluateCrewRequest(state, dutyId, action)
   const record: CrewCommunicationRecord = { day: state.day, dutyId, action, decision: decision === 'requestAccepted' ? 'accepted' : 'rejected', reason: decision }
   const records = [...state.crewCommunications, record]
@@ -210,17 +211,42 @@ export function respondToCrewRequest(state: GameState, dutyId: string, action: A
   let ongoingLeak = state.ongoingLeak
   let emergencyLevel = state.emergencyLevel
   let oxygenEmergencyHoursRemaining = state.oxygenEmergencyHoursRemaining
+  const crewConditions = { ...state.crewConditions }
+  const condition = getCrewCondition(state, dutyId)
+  const roleStrain: Record<CrewAssignment['specialty'], number> = {
+    command: 1,
+    pilot: 1.2,
+    science: 1,
+    medical: .8,
+    engineering: 1,
+    communications: .8,
+    power: .9,
+    resources: .9,
+    robotics: 1.1,
+    agriculture: .8,
+    'agriculture-resources': .9,
+    'science-medical': .9,
+    'engineering-science': 1,
+    'geology-agriculture': 1,
+  }
+  const strain = roleStrain[duty.specialty]
   let lastMessage = `${localizedName} · ${actionLabel}: ${response}`
   switch (action) {
     case 'research':
       science += 8
       fatigue = Math.min(100, fatigue + 3)
+      if (duty.specialty === 'agriculture' || duty.specialty === 'agriculture-resources') {
+        if (state.buildings.includes('greenhouse') && !state.offlineBuildings.includes('greenhouse')) {
+          resources.food = Math.min(getSupplyCapacity('food', state.crewSize), resources.food + 1)
+          resources.oxygen = Math.min(getSupplyCapacity('oxygen', state.crewSize), resources.oxygen + 0.25)
+        }
+      }
       break
     case 'explore': {
-      const dutyIndex = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays)
+      const dutyIndex = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays, state.crewSpecialtyOverrides)
         .findIndex((assignment) => assignment.id === dutyId)
       const success = deterministicRoll(state.missionSeed, state.day, 300 + dutyIndex) >= getExplorationRisk(state)
-      fatigue = Math.min(100, fatigue + 8)
+      fatigue = Math.min(100, fatigue + 8 * strain)
       if (success) {
         successfulExpeditions += 1
         science += 4
@@ -238,8 +264,8 @@ export function respondToCrewRequest(state: GameState, dutyId: string, action: A
       break
     }
     case 'maintenance':
-      resources.energy = Math.min(getEnergyCapacity(state), resources.energy + 4)
-      fatigue = Math.min(100, fatigue + 2)
+      resources.energy = Math.min(getEnergyCapacity(state), resources.energy + (duty.specialty === 'engineering' || duty.specialty === 'power' ? 5 : 4))
+      fatigue = Math.min(100, fatigue + 2 * strain)
       if (ongoingLeak) ongoingLeak = false
       if (oxygenEmergencyHoursRemaining !== null) {
         resources.oxygen = Math.min(100, resources.oxygen + 4)
@@ -257,9 +283,32 @@ export function respondToCrewRequest(state: GameState, dutyId: string, action: A
       resources.health = Math.min(100, resources.health + 3)
       break
   }
+  const conditionDelta: Record<Action, { health: number; fatigue: number; stress: number }> = {
+    research: { health: 0, fatigue: 5 * strain, stress: 4 * strain },
+    explore: { health: 0, fatigue: 12 * strain, stress: 10 * strain },
+    maintenance: { health: 0, fatigue: 8 * strain, stress: 6 * strain },
+    exercise: { health: 0, fatigue: -8, stress: -6 },
+    rest: { health: 3, fatigue: -18, stress: -14 },
+  }
+  const delta = conditionDelta[action]
+  const personality = getCrewPersonality(state, dutyId)
+  const moraleDelta: Record<Action, number> = {
+    research: 1,
+    explore: -4,
+    maintenance: 0,
+    exercise: 3,
+    rest: 5,
+  }
+  crewConditions[dutyId] = {
+    health: Math.max(0, Math.min(100, condition.health + delta.health)),
+    fatigue: Math.max(0, Math.min(100, condition.fatigue + delta.fatigue)),
+    stress: Math.max(0, Math.min(100, condition.stress + delta.stress / personality.stressTolerance)),
+    morale: Math.max(0, Math.min(100, condition.morale + moraleDelta[action] * personality.stressTolerance)),
+  }
 
   return {
     ...state,
+    crewConditions,
     resources,
     science,
     successfulExpeditions,
@@ -290,7 +339,7 @@ export interface EveningBriefing {
 
 export function getEveningBriefing(state: GameState, language: 'ar' | 'en'): EveningBriefing {
   const arabic = language === 'ar'
-  const assignments = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays)
+  const assignments = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays, state.crewSpecialtyOverrides)
   const resources = (['energy', 'oxygen', 'water', 'food'] as const).map((id) => ({
     id,
     delta: state.resources[id] - state.dailyResourceStart[id],
@@ -423,46 +472,21 @@ export function getEveningBriefing(state: GameState, language: 'ar' | 'en'): Eve
 }
 
 export function getAstronautDutyProgress(state: GameState, language: 'ar' | 'en', missionWide = false) {
-  const duty = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays)
+  const duty = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays, state.crewSpecialtyOverrides)
     .find((assignment) => assignment.id === state.astronautDutyId)
   if (!duty) throw new Error(`Astronaut duty "${state.astronautDutyId}" is unavailable for this mission crew.`)
 
+  const responsibility = getMissionSpecialization(duty.specialty)
   const taskActions: readonly { action: Action; label: { en: string; ar: string } }[] = (() => {
-    switch (duty.specialty) {
+    switch (responsibility) {
       case 'command':
-      case 'pilot':
-        return [
-          { action: 'explore', label: { en: 'Complete a field expedition', ar: 'تنفيذ مهمة استكشاف ميداني' } },
-          { action: 'maintenance', label: { en: 'Check vehicle and suit readiness', ar: 'فحص جاهزية المركبة والبدلة' } },
-        ]
+        return [{ action: 'exercise', label: { en: 'Maintain readiness for command duties', ar: 'الحفاظ على الجاهزية لمهام القيادة' } }]
       case 'engineering':
-      case 'communications':
-      case 'power':
-      case 'robotics':
-      case 'resources':
-      case 'agriculture-resources':
-        return [
-          { action: 'maintenance', label: { en: 'Inspect and maintain base systems', ar: 'فحص أنظمة القاعدة وصيانتها' } },
-          { action: 'research', label: { en: 'Review technical and resource data', ar: 'مراجعة البيانات التقنية وبيانات الموارد' } },
-        ]
-      case 'science':
-      case 'science-medical':
-      case 'engineering-science':
-      case 'geology-agriculture':
-        return [
-          { action: 'research', label: { en: 'Conduct the assigned research', ar: 'تنفيذ البحث العلمي المكلّف به' } },
-          { action: 'explore', label: { en: 'Collect field observations', ar: 'جمع الملاحظات الميدانية' } },
-        ]
-      case 'medical':
-        return [
-          { action: 'research', label: { en: 'Review crew health and science data', ar: 'مراجعة بيانات صحة الطاقم والعلوم' } },
-          { action: 'maintenance', label: { en: 'Inspect clinic and medical supplies', ar: 'فحص العيادة والمستلزمات الطبية' } },
-        ]
-      case 'agriculture':
-        return [
-          { action: 'research', label: { en: 'Review greenhouse growth data', ar: 'مراجعة بيانات نمو الدفيئة' } },
-          { action: 'maintenance', label: { en: 'Inspect greenhouse and crop systems', ar: 'فحص الدفيئة وأنظمة المحاصيل' } },
-        ]
+        return [{ action: 'maintenance', label: { en: 'Inspect and maintain base systems', ar: 'فحص أنظمة القاعدة وصيانتها' } }]
+      case 'biology':
+        return [{ action: 'research', label: { en: 'Conduct life-support and crew-health research', ar: 'إجراء أبحاث دعم الحياة وصحة الطاقم' } }]
+      case 'geology':
+        return [{ action: 'explore', label: { en: 'Complete a field expedition', ar: 'تنفيذ مهمة استكشاف ميداني' } }]
     }
   })()
   const acceptedRequests = state.crewCommunications
@@ -493,54 +517,48 @@ export function getAstronautDutyProgress(state: GameState, language: 'ar' | 'en'
 }
 
 export function recommendDailyAction(state: GameState): Action {
-  if (state.resources.health <= 45 || state.fatigue >= 70) return 'rest'
-  if (Math.min(state.resources.energy, state.resources.oxygen, state.resources.water, state.resources.food) <= 25) return 'maintenance'
-  if (state.objective === 'science') return 'research'
-  if (state.objective === 'exploration' && getExplorationRisk(state) <= 0.4) return 'explore'
-  return 'maintenance'
+  const priorities: readonly Action[] = state.resources.health <= 45 || state.fatigue >= 70
+    ? ['rest', 'exercise', 'maintenance', 'research', 'explore']
+    : Math.min(state.resources.energy, state.resources.oxygen, state.resources.water, state.resources.food) <= 25
+      ? ['maintenance', 'research', 'explore', 'exercise', 'rest']
+      : state.objective === 'science'
+        ? ['research', 'maintenance', 'explore', 'exercise', 'rest']
+        : state.objective === 'exploration' && getExplorationRisk(state) <= 0.4
+          ? ['explore', 'maintenance', 'research', 'exercise', 'rest']
+          : ['maintenance', 'research', 'explore', 'exercise', 'rest']
+  return priorities.find((action) => canPerformActivity(state, action)) || 'rest'
 }
 
 export function recommendSpecialistActivity(state: GameState): Action {
   if (state.resources.health <= 50 || state.fatigue >= 70) return 'rest'
-
-  let preferred: Action
-  switch (state.controlledRole) {
-    case 'commander':
-      preferred = state.objective === 'exploration' && getExplorationRisk(state) <= 0.4
-        ? 'explore'
-        : recommendDailyAction(state)
-      break
-    case 'power-engineer':
-      preferred = state.objective === 'science' && state.resources.energy > 35
-        ? 'research'
-        : 'maintenance'
-      break
-    case 'biologist':
-      preferred = state.objective === 'exploration' && getExplorationRisk(state) <= 0.4
-        ? 'explore'
-        : 'research'
-      break
-    case 'water-officer':
-      preferred = state.objective === 'exploration' && state.resources.water > 45 && getExplorationRisk(state) <= 0.35
-        ? 'explore'
-        : 'maintenance'
-      break
-  }
+  const duty = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays, state.crewSpecialtyOverrides)
+    .find((assignment) => assignment.id === state.controlledDutyId)
+  const preferred: Action = duty
+    ? ({
+        command: 'exercise',
+        engineering: 'maintenance',
+        biology: 'research',
+        geology: 'explore',
+      } as const)[getMissionSpecialization(duty.specialty)]
+    : 'rest'
   if (canPerformActivity(state, preferred)) return preferred
-  return (['maintenance', 'research', 'explore', 'exercise', 'rest'] as const)
+  return (['rest', 'exercise', 'maintenance', 'research', 'explore'] as const)
     .find((action) => canPerformActivity(state, action)) || 'rest'
 }
 
 export function recommendCrewSupportAction(state: GameState): Action {
-  if (state.resources.health <= 45 || state.fatigue >= 70) return 'rest'
-  if (Math.min(state.resources.energy, state.resources.oxygen, state.resources.water, state.resources.food) <= 30) return 'maintenance'
-
-  const priorities: readonly Action[] = state.objective === 'science'
-    ? ['research', 'maintenance', 'rest', 'explore']
-    : state.objective === 'exploration'
-      ? ['explore', 'maintenance', 'research', 'rest']
-      : ['maintenance', 'research', 'explore', 'rest']
-  return priorities.find((action) => !state.todayActions.includes(action)) || 'rest'
+  const priorities: readonly Action[] = state.resources.health <= 45 || state.fatigue >= 70
+    ? ['rest', 'exercise', 'maintenance', 'research', 'explore']
+    : Math.min(state.resources.energy, state.resources.oxygen, state.resources.water, state.resources.food) <= 30
+      ? ['maintenance', 'research', 'explore', 'rest', 'exercise']
+      : state.objective === 'science'
+        ? ['research', 'maintenance', 'rest', 'explore', 'exercise']
+        : state.objective === 'exploration'
+          ? ['explore', 'maintenance', 'research', 'rest', 'exercise']
+          : ['maintenance', 'research', 'explore', 'rest', 'exercise']
+  return priorities.find((action) =>
+    !state.todayActions.includes(action) && canPerformActivity(state, action),
+  ) || priorities.find((action) => canPerformActivity(state, action)) || 'rest'
 }
 
 function eventResponseScore(state: GameState, event: EventDefinition, index: number, role: CrewRole): number {
@@ -585,18 +603,19 @@ function eventResponseScore(state: GameState, event: EventDefinition, index: num
 
 export function recommendEventResponse(state: GameState, event: EventDefinition): {
   votes: Record<CrewRole, number>
-  recommendedIndex: number
+  recommendedIndex: number | null
 } {
   const available = event.choices
     .map((choice, index) => ({ choice, index }))
-    .filter(({ choice }) => canChooseEventOption(state, choice))
-  const options = available.length ? available : [{ choice: event.choices[0], index: 0 }]
+    .filter(({ choice }) => canChooseEventOption(state, choice, event.id))
   const votes: Record<CrewRole, number> = {
     commander: 0,
     'power-engineer': 0,
     biologist: 0,
     'water-officer': 0,
   }
+  if (!available.length) return { votes, recommendedIndex: null }
+  const options = available
   const counts = event.choices.map(() => 0)
 
   for (const role of getAvailableCrewRoles(state.crewSize, state.destination, state.maxDays)) {

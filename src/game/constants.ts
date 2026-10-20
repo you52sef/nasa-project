@@ -22,7 +22,7 @@ export const ENVIRONMENT = {
   marsSolarStormDays: { min: 3, max: 5 },
   transitRadiationMsvPerDay: 1.84,
   marsSurfaceRadiationMsvPerDay: 0.64,
-  careerRadiationLimitMsv: 600,
+  gameRadiationWarningThresholdMsv: 600,
 } as const
 
 export const CREW_DAILY_ROUTINE = [
@@ -90,7 +90,7 @@ export const POWER_SYSTEM = {
   },
   productiveBuildings: ['workshop', 'research-lab', 'medical-bay', 'isru', 'greenhouse', 'moxie', 'electrostatic-dust-shield'],
   automaticLoadShedBuildings: ['workshop', 'research-lab', 'robotics-unit', 'mass-spectrometer', 'pressurized-rover'],
-  automaticLoadShedEnterEnergyFraction: 0.2,
+  automaticLoadShedEnterEnergyFraction: 0.15,
   automaticLoadShedRecoverEnergyFraction: 0.5,
   automaticLoadShedEnterResourceAmount: 15,
   automaticLoadShedRecoverResourceAmount: 35,
@@ -98,7 +98,7 @@ export const POWER_SYSTEM = {
 
 export const GREENHOUSE_CYCLE = {
   growthDays: 4,
-  waterLitersPerDay: 1.5,
+  waterLitersPerCycle: 10,
   foodKg: 20,
   oxygenKg: 3,
   regolithTreatmentEnergyKwh: 2,

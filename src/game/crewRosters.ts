@@ -1,9 +1,52 @@
 import type { Destination } from './model'
 
+export type CrewSpecialty =
+  | 'command' | 'pilot' | 'science' | 'medical' | 'engineering' | 'communications'
+  | 'power' | 'resources' | 'robotics' | 'agriculture' | 'agriculture-resources'
+  | 'science-medical' | 'engineering-science' | 'geology-agriculture'
+
+export type MissionSpecialization = 'command' | 'engineering' | 'biology' | 'geology'
+
+const SPECIALTY_RESPONSIBILITIES: Record<CrewSpecialty, MissionSpecialization> = {
+  command: 'command',
+  pilot: 'command',
+  engineering: 'engineering',
+  communications: 'engineering',
+  power: 'engineering',
+  'engineering-science': 'engineering',
+  medical: 'biology',
+  agriculture: 'biology',
+  'agriculture-resources': 'biology',
+  'science-medical': 'biology',
+  science: 'geology',
+  resources: 'geology',
+  robotics: 'geology',
+  'geology-agriculture': 'geology',
+}
+
+const RESPONSIBILITY_TITLES: Record<MissionSpecialization, { en: string; ar: string }> = {
+  command: { en: 'Commander/Pilot', ar: 'قائد المهمة/طيار' },
+  engineering: { en: 'Systems Engineer', ar: 'مهندس أنظمة' },
+  biology: { en: 'Biologist/Doctor', ar: 'عالم أحياء/طبيب' },
+  geology: { en: 'Geologist/Specialist', ar: 'جيولوجي/اختصاصي' },
+}
+
+export function getMissionSpecialization(specialty: CrewSpecialty): MissionSpecialization {
+  return SPECIALTY_RESPONSIBILITIES[specialty]
+}
+
+export function getMissionSpecializationTitle(specialization: MissionSpecialization, language: 'en' | 'ar' = 'en'): string {
+  return RESPONSIBILITY_TITLES[specialization][language]
+}
+
+export function getAccessDeniedMessage(specialization: MissionSpecialization, language: 'en' | 'ar' = 'en'): string {
+  return `Access Denied: Action requires ${getMissionSpecializationTitle(specialization, language)}`
+}
+
 export interface CrewAssignment {
   title: string
   count: number
-  specialty: 'command' | 'pilot' | 'science' | 'medical' | 'engineering' | 'communications' | 'power' | 'resources' | 'robotics' | 'agriculture' | 'agriculture-resources' | 'science-medical' | 'engineering-science' | 'geology-agriculture'
+  specialty: CrewSpecialty
 }
 
 export interface CrewRoster {
@@ -76,7 +119,7 @@ export const CREW_ROSTERS: readonly CrewRoster[] = [
   ]),
   roster('mars', 'long', 9, 'Mars long', [
     { title: 'Commander 1', count: 1, specialty: 'command' },
-    { title: 'Commander 2/Co-Pilot', count: 1, specialty: 'command' },
+    { title: 'Co-Commander/Co-Pilot', count: 1, specialty: 'command' },
     { title: 'Power & Infrastructure Engineer', count: 2, specialty: 'power' },
     { title: 'Surgeon', count: 1, specialty: 'medical' },
     { title: 'Space Agriculture Scientist', count: 1, specialty: 'agriculture' },
@@ -86,7 +129,7 @@ export const CREW_ROSTERS: readonly CrewRoster[] = [
   ]),
   roster('mars', 'long', 12, 'Mars long', [
     { title: 'Commander', count: 1, specialty: 'command' },
-    { title: 'Deputy Commander/Navigator', count: 1, specialty: 'command' },
+    { title: 'Co-Commander/Navigator', count: 1, specialty: 'command' },
     { title: 'Power Engineer', count: 2, specialty: 'power' },
     { title: 'Maintenance Engineer', count: 2, specialty: 'engineering' },
     { title: 'Surgeon', count: 1, specialty: 'medical' },
@@ -128,12 +171,12 @@ const ARABIC_ROLE_NAMES: Readonly<Record<string, string>> = {
   'Sabatier/ISRU Fuel Chemist': 'كيميائي وقود وموارد محلية ساباتيه',
   'Robotics Engineer': 'مهندس روبوتات',
   'Commander 1': 'قائد المهمة الأول',
-  'Commander 2/Co-Pilot': 'نائب القائد / مساعد الطيار',
+  'Co-Commander/Co-Pilot': 'مساعد القائد / مساعد الطيار',
   'Power & Infrastructure Engineer': 'مهندس طاقة وبنية تحتية',
   'Fuel Chemist/ISRU': 'كيميائي وقود / موارد محلية',
   'AI & Robotics Engineer': 'مهندس ذكاء اصطناعي وروبوتات',
   'Astrobiologist/Geologist': 'عالم أحياء فلكية / جيولوجي',
-  'Deputy Commander/Navigator': 'نائب القائد / الملاح',
+  'Co-Commander/Navigator': 'مساعد القائد / الملاح',
   'Power Engineer': 'مهندس طاقة',
   'Maintenance Engineer': 'مهندس صيانة',
   'Psychologist/Biologist': 'طبيب نفسي / عالم أحياء',
@@ -229,8 +272,8 @@ export const CREW_DUTIES: Readonly<Record<string, readonly [CrewDutyDescription,
   'Commander 1': [
     { en: 'Direct mission strategy and overall operating policy.', ar: 'التوجيه العام ووضع السياسة التشغيلية للمهمة.' },
   ],
-  'Commander 2/Co-Pilot': [
-    { en: 'Lead alternate daily operations and support spacecraft navigation.', ar: 'إدارة العمليات اليومية البديلة ومساندة الملاحة.' },
+  'Co-Commander/Co-Pilot': [
+    { en: 'Support the commander, lead delegated operations, and assist with spacecraft navigation.', ar: 'مساندة القائد وقيادة العمليات المفوضة والمساعدة في ملاحة المركبة.' },
   ],
   'Power & Infrastructure Engineer': [
     { en: 'Maintain the reactor and power distribution network.', ar: 'صيانة المفاعلات وشبكات توزيع الطاقة.' },
@@ -245,8 +288,8 @@ export const CREW_DUTIES: Readonly<Record<string, readonly [CrewDutyDescription,
   'Astrobiologist/Geologist': [
     { en: 'Search for signs of ancient life and analyze hazardous samples.', ar: 'البحث عن آثار الحياة القديمة وتحليل العينات الخطرة.' },
   ],
-  'Deputy Commander/Navigator': [
-    { en: 'Calculate routes and coordinate field operations as deputy lead.', ar: 'حساب المسارات وتنسيق العمليات الميدانية بصفته نائب القائد.' },
+  'Co-Commander/Navigator': [
+    { en: 'Back up the commander, calculate routes, and coordinate field operations.', ar: 'مساندة القائد وحساب المسارات وتنسيق العمليات الميدانية.' },
   ],
   'Power Engineer': [
     { en: 'Maintain nuclear power-generation systems.', ar: 'صيانة أنظمة توليد الطاقة النووية.' },
@@ -275,13 +318,43 @@ export function localizeCrewRole(title: string, language: 'ar' | 'en'): string {
   return `${localizedTitle} ${ordinal}`
 }
 
-export function getCrewAssignmentById(destination: Destination, maxDays: number, crewSize: number, dutyId: string) {
+const SPECIALTY_NAMES: Record<CrewSpecialty, { en: string; ar: string }> = {
+  command: { en: 'Commander', ar: 'قائد المهمة' },
+  pilot: { en: 'Pilot', ar: 'طيار' },
+  science: { en: 'Science Specialist', ar: 'اختصاصي علوم' },
+  medical: { en: 'Medical Officer', ar: 'مسؤول طبي' },
+  engineering: { en: 'Systems Engineer', ar: 'مهندس أنظمة' },
+  communications: { en: 'Communications Officer', ar: 'مسؤول اتصالات' },
+  power: { en: 'Power Engineer', ar: 'مهندس طاقة' },
+  resources: { en: 'Resource Specialist', ar: 'اختصاصي موارد' },
+  robotics: { en: 'Robotics Engineer', ar: 'مهندس روبوتات' },
+  agriculture: { en: 'Life Support Botanist', ar: 'اختصاصي زراعة ودعم حياة' },
+  'agriculture-resources': { en: 'Agriculture & Resources Specialist', ar: 'اختصاصي زراعة وموارد' },
+  'science-medical': { en: 'Science / Medical Specialist', ar: 'اختصاصي علوم وطب' },
+  'engineering-science': { en: 'Engineering / Science Specialist', ar: 'اختصاصي هندسة وعلوم' },
+  'geology-agriculture': { en: 'Geology / Agriculture Specialist', ar: 'اختصاصي جيولوجيا وزراعة' },
+}
+
+export function localizeCrewSpecialty(specialty: CrewSpecialty, language: 'ar' | 'en'): string {
+  return SPECIALTY_NAMES[specialty][language]
+}
+
+export function getCrewAssignmentById(
+  destination: Destination,
+  maxDays: number,
+  crewSize: number,
+  dutyId: string,
+  specialtyOverrides: Readonly<Record<string, CrewSpecialty>> = {},
+) {
   const roster = getCrewRoster(destination, maxDays, crewSize)
   if (!roster) return undefined
   for (const assignment of roster.assignments) {
     const slug = assignment.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')
     for (let index = 0; index < assignment.count; index += 1) {
-      if (`${slug}-${index + 1}` === dutyId) return assignment
+      if (`${slug}-${index + 1}` === dutyId) {
+        const specialty = specialtyOverrides[dutyId]
+        return specialty ? { ...assignment, specialty } : assignment
+      }
     }
   }
   return undefined

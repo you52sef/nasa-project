@@ -37,13 +37,10 @@ test('astronaut duty progress reflects completed actions in the current mission 
     astronautDutyId: 'commander-1',
   })
   const pending = getAstronautDutyProgress(mission, 'en')
-  assert.equal(pending.requiredAction, 'explore')
+  assert.equal(pending.requiredAction, 'exercise')
   assert.equal(pending.percent, 0)
   assert.equal(getAstronautDutyProgress({ ...mission, todayActions: ['research'] }, 'en').percent, 0)
-  const partial = getAstronautDutyProgress({ ...mission, todayActions: ['explore'] }, 'en')
-  assert.equal(partial.percent, 50)
-  assert.equal(partial.tasks.filter((task) => task.complete).length, 1)
-  const complete = getAstronautDutyProgress({ ...mission, todayActions: ['explore', 'maintenance'] }, 'en')
+  const complete = getAstronautDutyProgress({ ...mission, todayActions: ['exercise'] }, 'en')
   assert.equal(complete.percent, 100)
   assert.equal(complete.complete, true)
 })
@@ -56,11 +53,11 @@ test('final report duty completion uses recorded actions across the mission', ()
   const completed = getAstronautDutyProgress({
     ...mission,
     todayActions: [],
-    actionHistory: ['explore'],
+    actionHistory: ['exercise'],
     crewCommunications: [{
       day: 2,
       dutyId: 'commander-1',
-      action: 'maintenance',
+      action: 'exercise',
       decision: 'accepted',
       reason: 'requestAccepted',
     }],
@@ -70,24 +67,24 @@ test('final report duty completion uses recorded actions across the mission', ()
   assert.equal(getAstronautDutyProgress({
     ...mission,
     todayActions: [],
-    crewSupportActionHistory: ['explore', 'maintenance'],
+    crewSupportActionHistory: ['exercise', 'maintenance'],
   }, 'en', true).percent, 0)
 })
 
-test('engineering and science duty checklists use role-specific, recorded daily actions', () => {
+test('specialist duty checklists only include actions permitted for their responsibility', () => {
   const engineerMission = initialGameState('mars', 6, 'Mars Settlement', 13, {
     missionType: 'mars-conjunction',
-    astronautDutyId: 'sabatier-isru-fuel-chemist-1',
+    astronautDutyId: 'chief-reactor-power-engineer-1',
   })
   const engineerProgress = getAstronautDutyProgress({ ...engineerMission, todayActions: ['maintenance'] }, 'en')
-  assert.deepEqual(engineerProgress.tasks.map((task) => task.action), ['maintenance', 'research'])
-  assert.equal(engineerProgress.percent, 50)
+  assert.deepEqual(engineerProgress.tasks.map((task) => task.action), ['maintenance'])
+  assert.equal(engineerProgress.percent, 100)
 
   const scientistMission = initialGameState('mars', 4, 'Mars Science', 14, {
     missionType: 'mars-opposition',
     astronautDutyId: 'geologist-1',
   })
-  const scientistProgress = getAstronautDutyProgress({ ...scientistMission, todayActions: ['research', 'explore'] }, 'en')
-  assert.deepEqual(scientistProgress.tasks.map((task) => task.action), ['research', 'explore'])
+  const scientistProgress = getAstronautDutyProgress({ ...scientistMission, todayActions: ['explore'] }, 'en')
+  assert.deepEqual(scientistProgress.tasks.map((task) => task.action), ['explore'])
   assert.equal(scientistProgress.percent, 100)
 })

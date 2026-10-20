@@ -1,21 +1,19 @@
-import { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, ArrowLeft, ArrowRight, ChevronDown, Copy, Database, Moon, Rocket, Shuffle, Volume2, VolumeX } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { AlertTriangle, ArrowLeft, ArrowRight, BookOpen, ChevronDown, Copy, Database, Moon, Radar, Rocket, Shuffle, Volume2, VolumeX } from 'lucide-react'
 import ar from '../i18n/ar'
 import en from '../i18n/en'
 import { useGameStore } from '../store/gameStore'
 import { useSettingsStore } from '../store/settingsStore'
 import { LanguageSwitch } from './LanguageSwitch'
-import { ModelDisclosure } from './ModelDisclosure'
 import { SCENARIOS, type ScenarioId } from '../game/scenarios'
 import { CREW_ROLES, getMissionCrewAssignments } from '../game/teamwork'
-import { EVENTS } from '../game/events'
 import { useSound } from '../hooks/useSound'
-import { estimateTransfer } from '../game/flightPhysics'
 import { getAllowedCrewSizes, getCrewRoster, localizeCrewRole } from '../game/crewRosters'
 import { LearningAcademy } from './LearningAcademy'
 import { DataOriginsModal } from './DataOriginsModal'
 import type { MissionType } from '../game/model'
 import { MISSION_PROFILES } from '../game/missionProfiles'
+import { OrbitalTransferVisualizer } from './OrbitalTransferVisualizer'
 
 type SimulationSetupStep =
   | 'destination'
@@ -37,6 +35,43 @@ const SIMULATION_SETUP_STEPS: readonly SimulationSetupStep[] = [
   'difficulty',
   'base-name',
 ]
+
+const START_SCREEN_STATE_KEY = 'astra-one-start-screen-v1'
+
+type StartScreenState = {
+  introVisible: boolean
+  modeChosen: boolean
+  missionMode: 'education' | 'simulation'
+  setupStep: SimulationSetupStep
+  academyOpen: boolean
+}
+
+function readStartScreenState(): StartScreenState {
+  const defaults: StartScreenState = {
+    introVisible: true,
+    modeChosen: false,
+    missionMode: 'education',
+    setupStep: 'destination',
+    academyOpen: false,
+  }
+  try {
+    const raw = sessionStorage.getItem(START_SCREEN_STATE_KEY)
+    if (!raw) return defaults
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') throw new Error('Invalid saved start-screen state.')
+    const value = parsed as Partial<StartScreenState>
+    return {
+      introVisible: typeof value.introVisible === 'boolean' ? value.introVisible : defaults.introVisible,
+      modeChosen: typeof value.modeChosen === 'boolean' ? value.modeChosen : defaults.modeChosen,
+      missionMode: value.missionMode === 'simulation' || value.missionMode === 'education' ? value.missionMode : defaults.missionMode,
+      setupStep: SIMULATION_SETUP_STEPS.includes(value.setupStep as SimulationSetupStep) ? value.setupStep as SimulationSetupStep : defaults.setupStep,
+      academyOpen: typeof value.academyOpen === 'boolean' ? value.academyOpen : defaults.academyOpen,
+    }
+  } catch (error) {
+    console.error('Could not restore Astra One start-screen state.', error)
+    return defaults
+  }
+}
 
 export function StartScreen() {
   const language = useSettingsStore((state) => state.language)
@@ -74,21 +109,24 @@ export function StartScreen() {
   const savedGame = useGameStore((state) => state.savedGameExists)
   const [loadError, setLoadError] = useState('')
   const [launching, setLaunching] = useState(false)
+  const [restoredView] = useState(readStartScreenState)
+  const [introVisible, setIntroVisible] = useState(restoredView.introVisible)
+  const [introExiting, setIntroExiting] = useState(false)
   const [confirmNewMission, setConfirmNewMission] = useState(false)
-  const [modeChosen, setModeChosen] = useState(false)
-  const [setupStep, setSetupStep] = useState<SimulationSetupStep>('destination')
-  const [academyOpen, setAcademyOpen] = useState(false)
+  const [modeChosen, setModeChosen] = useState(restoredView.modeChosen)
+  const [setupStep, setSetupStep] = useState<SimulationSetupStep>(restoredView.setupStep)
+  const [academyOpen, setAcademyOpen] = useState(restoredView.academyOpen)
   const [dataOriginsOpen, setDataOriginsOpen] = useState(false)
   const [missionPlanExpanded, setMissionPlanExpanded] = useState(false)
   const [seedCopied, setSeedCopied] = useState(false)
   const launchButtonRef = useRef<HTMLButtonElement>(null)
   const missionPlanDetailsRef = useRef<HTMLDivElement>(null)
+  const seedCopyTimerRef = useRef<number | null>(null)
   const cancelConfirmationRef = useRef<HTMLButtonElement>(null)
   const confirmMissionRef = useRef<HTMLButtonElement>(null)
   const { soundEnabled, toggleSound, playLaunch, playScenario } = useSound()
   const isArabic = language === 'ar'
   const DirectionIcon = isArabic ? ArrowLeft : ArrowRight
-  const transferEstimate = estimateTransfer(destination === 'moon' ? 'earth-moon' : 'earth-mars')
   const missionProfile = MISSION_PROFILES[missionType]
   const missionObjectiveChoices: MissionType[] = destination === 'moon'
     ? ['moon-exploration', 'moon-settlement']
@@ -97,15 +135,86 @@ export function StartScreen() {
     .filter((size) => size >= missionProfile.minimumCrew)
   const crewRoster = getCrewRoster(destination, maxDays, crewSize)
   const crewDuties = getMissionCrewAssignments(crewSize, destination, maxDays)
-  const visibleThroughStep = SIMULATION_SETUP_STEPS.indexOf(setupStep)
-  const isStepVisible = (step: SimulationSetupStep) =>
-    SIMULATION_SETUP_STEPS.indexOf(step) <= visibleThroughStep
+  const visibleSetupSteps = SIMULATION_SETUP_STEPS.filter((step) =>
+    step !== 'specialist-role' || controlMode === 'specialist',
+  )
+  const setupLabels: Record<SimulationSetupStep, string> = {
+    destination: t.destination,
+    'mission-objective': t.missionObjective,
+    'crew-size': t.crew,
+    'control-mode': t.controlStyleTitle,
+    'specialist-role': isArabic ? 'دور الطاقم' : 'Crew role',
+    'mission-details': t.scenarioLabel,
+    difficulty: t.difficulty,
+    'base-name': t.baseName,
+  }
+  const setupProgressLabels: Record<SimulationSetupStep, string> = {
+    destination: isArabic ? 'الوجهة' : 'Destination',
+    'mission-objective': isArabic ? 'الهدف' : 'Objective',
+    'crew-size': isArabic ? 'الطاقم' : 'Crew',
+    'control-mode': isArabic ? 'التحكم' : 'Control',
+    'specialist-role': isArabic ? 'الدور' : 'Role',
+    'mission-details': isArabic ? 'السيناريو' : 'Scenario',
+    difficulty: isArabic ? 'الصعوبة' : 'Difficulty',
+    'base-name': isArabic ? 'القاعدة' : 'Base',
+  }
+  const setupStepComplete: Record<SimulationSetupStep, boolean> = {
+    destination: destination === 'moon' || destination === 'mars',
+    'mission-objective': missionObjectiveChoices.includes(missionType),
+    'crew-size': allowedCrewSizes.includes(crewSize) && crewSize >= missionProfile.minimumCrew,
+    'control-mode': controlMode === 'specialist' || controlMode === 'full',
+    'specialist-role': crewDuties.some((duty) => duty.id === controlledDutyId),
+    'mission-details': Boolean(SCENARIOS[scenario]) && missionType.startsWith(destination),
+    difficulty: difficulty === 'easy' || difficulty === 'normal' || difficulty === 'hard',
+    'base-name': baseName.trim().length > 0,
+  }
+  const isFormValid = baseName.trim().length > 0
+  const currentStepIndex = visibleSetupSteps.indexOf(setupStep)
+  const activeSetupStep = currentStepIndex >= 0 ? setupStep : 'control-mode'
+  const activeStepIndex = visibleSetupSteps.indexOf(activeSetupStep)
+  const handleDestinationChange = useCallback((target: typeof destination) => {
+    setDestination(target)
+    if (activeSetupStep === 'destination') setSetupStep('mission-objective')
+  }, [activeSetupStep, setDestination])
+
+  useEffect(() => {
+    if (activeSetupStep !== setupStep) setSetupStep(activeSetupStep)
+  }, [activeSetupStep, setupStep])
 
   useEffect(() => {
     if (missionPlanDetailsRef.current) missionPlanDetailsRef.current.inert = !missionPlanExpanded
   }, [missionPlanExpanded])
 
+  useEffect(() => () => {
+    if (seedCopyTimerRef.current !== null) window.clearTimeout(seedCopyTimerRef.current)
+  }, [])
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(START_SCREEN_STATE_KEY, JSON.stringify({
+        introVisible,
+        modeChosen,
+        missionMode,
+        setupStep,
+        academyOpen,
+      } satisfies StartScreenState))
+    } catch (error) {
+      console.error('Could not save Astra One start-screen state.', error)
+    }
+  }, [academyOpen, introVisible, missionMode, modeChosen, setupStep])
+
+  useEffect(() => {
+    if (!introExiting) return
+    const transitionDuration = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 850
+    const timeout = window.setTimeout(() => {
+      setIntroVisible(false)
+      setIntroExiting(false)
+    }, transitionDuration)
+    return () => window.clearTimeout(timeout)
+  }, [introExiting])
+
   const chooseMode = (mode: 'education' | 'simulation') => {
+    window.scrollTo({ top: 0 })
     setMissionMode(mode)
     setModeChosen(true)
     if (mode === 'education') {
@@ -122,6 +231,41 @@ export function StartScreen() {
       if (maxDays !== 30 && maxDays !== 180) setMissionLength(30)
     }
   }
+
+  const navigateSetup = (step: SimulationSetupStep) => {
+    const targetIndex = visibleSetupSteps.indexOf(step)
+    if (targetIndex < 0 || targetIndex > activeStepIndex) return
+    if (targetIndex < activeStepIndex && !setupStepComplete[step]) return
+    setSetupStep(step)
+  }
+
+  const advanceSetupStep = (step: SimulationSetupStep) => {
+    if (activeSetupStep !== step || !setupStepComplete[step]) return
+    const stepIndex = visibleSetupSteps.indexOf(step)
+    const nextStep = visibleSetupSteps[stepIndex + 1]
+    if (nextStep) setSetupStep(nextStep)
+  }
+
+  const advanceAfterChoice = (step: SimulationSetupStep, nextStep?: SimulationSetupStep) => {
+    if (activeSetupStep !== step) return
+    if (nextStep) {
+      setSetupStep(nextStep)
+      return
+    }
+    advanceSetupStep(step)
+  }
+
+  const renderNextStep = (step: SimulationSetupStep) => (
+    <button
+      type="button"
+      className="setup-next-button"
+      disabled={!setupStepComplete[step]}
+      onClick={() => advanceSetupStep(step)}
+    >
+      <span>{isArabic ? 'الخطوة التالية' : 'Next Step'}</span>
+      <DirectionIcon size={16} aria-hidden="true" />
+    </button>
+  )
 
   useEffect(() => {
     if (!confirmNewMission) return
@@ -142,6 +286,43 @@ export function StartScreen() {
       launchButtonRef.current?.focus()
     }
   }, [confirmNewMission])
+
+  if (introVisible) {
+    return (
+      <main className={`mission-start mission-start-home mission-intro relative flex min-h-screen items-center justify-center overflow-hidden px-4 text-white${introExiting ? ' is-leaving' : ''}`} dir={isArabic ? 'rtl' : 'ltr'}>
+        <div className="mission-intro-stars" aria-hidden="true" />
+        <section className="mission-intro-panel">
+          <div className="mission-intro-logo" aria-hidden="true">
+            <Rocket size={25} strokeWidth={1.5} />
+          </div>
+          <p className="mission-intro-eyebrow">{isArabic ? 'مركز تدريب المهمات الفضائية' : 'SPACE MISSION TRAINING PROGRAM'}</p>
+          <button
+            type="button"
+            className="mission-intro-start"
+            onClick={() => {
+              try {
+                sessionStorage.setItem(START_SCREEN_STATE_KEY, JSON.stringify({
+                  introVisible: false,
+                  modeChosen: false,
+                  missionMode,
+                  setupStep,
+                  academyOpen: false,
+                } satisfies StartScreenState))
+              } catch (error) {
+                console.error('Could not save Astra One start-screen state.', error)
+              }
+              setIntroExiting(true)
+            }}
+            disabled={introExiting}
+          >
+            <span>{t.startNow}</span>
+            <DirectionIcon size={17} aria-hidden="true" />
+          </button>
+          <span className="mission-intro-orbit-mark" aria-hidden="true" />
+        </section>
+      </main>
+    )
+  }
 
   const beginLaunch = () => {
     if (launching) return
@@ -177,19 +358,60 @@ export function StartScreen() {
     try {
       await navigator.clipboard.writeText(String(missionSeed))
       setSeedCopied(true)
-      window.setTimeout(() => setSeedCopied(false), 1800)
+      if (seedCopyTimerRef.current !== null) window.clearTimeout(seedCopyTimerRef.current)
+      seedCopyTimerRef.current = window.setTimeout(() => {
+        setSeedCopied(false)
+        seedCopyTimerRef.current = null
+      }, 1800)
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : 'Could not copy the mission seed.')
     }
   }
 
   if (academyOpen) {
-    return <LearningAcademy onClose={() => setAcademyOpen(false)} onLaunch={handleLaunch} />
+    return <LearningAcademy onClose={() => {
+      setAcademyOpen(false)
+      setModeChosen(false)
+    }} onLaunch={handleLaunch} />
   }
 
   return (
-    <main className="mission-start relative flex min-h-screen items-center justify-center overflow-hidden px-4 pb-8 pt-24 text-white sm:pt-28" dir={isArabic ? 'rtl' : 'ltr'}>
+    <main className={`mission-start relative flex min-h-screen items-center justify-center overflow-hidden px-4 pb-8 pt-24 text-white sm:pt-28${modeChosen && missionMode === 'simulation' ? ' mission-setup-console' : modeChosen ? '' : ' mission-start-home'}`} dir={isArabic ? 'rtl' : 'ltr'}>
       <div className="orbit-glow pointer-events-none absolute inset-0" />
+      <div className="mission-start-utilities fixed top-6 right-6 z-50 flex items-center gap-3" dir="ltr" aria-label={isArabic ? 'أدوات الصفحة' : 'Page utilities'}>
+        <button
+          type="button"
+          onClick={() => setDataOriginsOpen(true)}
+          className="mission-utility-button"
+          aria-label={t.dataOriginsLabel}
+          title={t.dataOriginsLabel}
+        >
+          <Database size={17} />
+        </button>
+        <button
+          type="button"
+          onClick={toggleSound}
+          className="mission-utility-button"
+          aria-label={soundEnabled ? t.muteSound : t.unmuteSound}
+          title={soundEnabled ? t.muteSound : t.unmuteSound}
+        >
+          {soundEnabled ? <Volume2 size={17} /> : <VolumeX size={17} />}
+        </button>
+        <LanguageSwitch />
+      </div>
+      {modeChosen ? (
+        <nav className="mission-page-back-nav" aria-label={isArabic ? 'التنقل' : 'Page navigation'}>
+          <button
+            type="button"
+            onClick={() => setModeChosen(false)}
+            className="mission-back-mode"
+            aria-label={t.changeMissionMode}
+          >
+            <DirectionIcon size={16} aria-hidden="true" />
+            <span>{t.changeMissionMode}</span>
+          </button>
+        </nav>
+      ) : null}
       <header className="astra-command-header">
         <div className="flex min-w-0 items-center gap-3">
           <div className="astra-insignia" aria-hidden="true"><span>A</span></div>
@@ -203,89 +425,13 @@ export function StartScreen() {
           {isArabic ? 'النظام جاهز · اختر المهمة' : 'SYSTEM READY · SELECT MISSION'}
         </div>
       </header>
-      <section className="mission-start-card relative z-10 grid w-full max-w-6xl overflow-hidden rounded-[1.25rem] border border-white/10 bg-[#141510] lg:grid-cols-[1fr_0.92fr]">
-        <div className="mission-start-copy relative flex min-h-[330px] flex-col justify-between overflow-hidden border-e border-white/[0.06] bg-[#171712] p-7 sm:p-11 lg:min-h-[650px]">
-          <div className="relative flex items-center justify-between">
-            <span className="eyebrow"><span className="h-1.5 w-1.5 rounded-full bg-emerald-300" /> {t.projectLabel}</span>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setDataOriginsOpen(true)}
-                className="icon-button !h-9 !w-9"
-                aria-label={t.dataOriginsLabel}
-                title={t.dataOriginsLabel}
-              >
-                <Database size={15} />
-              </button>
-              <button
-                type="button"
-                onClick={toggleSound}
-                className="icon-button !h-9 !w-9"
-                aria-label={soundEnabled ? t.muteSound : t.unmuteSound}
-                title={soundEnabled ? t.muteSound : t.unmuteSound}
-              >
-                {soundEnabled ? <Volume2 size={15} /> : <VolumeX size={15} />}
-              </button>
-              <LanguageSwitch />
-            </div>
-          </div>
-          <div className="relative my-6 sm:my-8">
-            <div className="mission-orbit-scene" role="img" aria-label={`${t.homePlanet} → ${destination === 'moon' ? t.moon : t.mars}`}>
-              <svg className="mission-transfer-map" viewBox="0 0 420 210" fill="none" aria-hidden="true">
-                <defs>
-                  <linearGradient id="transfer-route-gradient" x1="52" y1="155" x2="337" y2="73" gradientUnits="userSpaceOnUse">
-                    <stop stopColor="#7CE4DC" stopOpacity=".05" />
-                    <stop offset=".52" stopColor="#7CE4DC" stopOpacity=".75" />
-                    <stop offset="1" stopColor="#F1C28A" stopOpacity=".28" />
-                  </linearGradient>
-                  <filter id="transfer-node-glow" x="-100%" y="-100%" width="300%" height="300%">
-                    <feGaussianBlur stdDeviation="3" result="blur" />
-                    <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-                  </filter>
-                </defs>
-                <ellipse className="mission-orbit-ring" cx="90" cy="105" rx="60" ry="35" transform="rotate(-27 90 105)" />
-                <ellipse className="mission-orbit-ring mission-orbit-ring-target" cx="331" cy="97" rx="78" ry="43" transform="rotate(-27 331 97)" />
-                <path className="mission-transfer-trail" d="M52 154C107 32 234 24 336 76" stroke="url(#transfer-route-gradient)" strokeDasharray="4 7" />
-                <circle className="mission-orbit-origin" cx="69" cy="142" r="5" />
-                <circle className="mission-orbit-ping" cx="69" cy="142" r="5" filter="url(#transfer-node-glow)" />
-                <circle className="mission-transfer-craft" r="3.5" fill="#E9FFFF" filter="url(#transfer-node-glow)">
-                  <animateMotion dur="8s" repeatCount="indefinite" path="M52 154C107 32 234 24 336 76" />
-                </circle>
-              </svg>
-              <div className="mission-orbit-origin-label" dir="ltr">{t.homePlanet}</div>
-              <div
-                className={`mission-planet mission-planet-${destination}`}
-                role="img"
-                aria-label={destination === 'moon' ? t.moon : t.mars}
-              >
-                <span className="planet-surface" />
-                <span className="planet-orbit" aria-hidden="true">
-                  <span className="planet-satellite" />
-                </span>
-              </div>
-              <div className="mission-orbit-target-label">{destination === 'moon' ? t.moon : t.mars}</div>
-              <div className="mission-orbit-readout" dir="ltr"><span className="mission-live-dot" /> TRANSFER SOLUTION · IDEALIZED</div>
-            </div>
-            <div className="mission-telemetry-strip" dir={isArabic ? 'rtl' : 'ltr'}>
-              <div><span>{t.estimatedTransferTimeLabel}</span><b>{transferEstimate.durationDays.toFixed(1)} {t.days}</b></div>
-              <div><span>{t.departureDeltaVLabel}</span><b>{transferEstimate.departureDeltaVKmS.toFixed(2)} km/s</b></div>
-              <div><span>{t.requiredPhaseAngleLabel}</span><b>{transferEstimate.phaseAngleDegrees.toFixed(1)}°</b></div>
-            </div>
-            <p className="mb-3 text-xs font-bold tracking-[0.28em] text-cyan-200/80">ASTRA ONE / 01</p>
-            <h1 className="max-w-xl text-5xl font-black leading-[0.98] tracking-tight sm:text-7xl">{t.title}</h1>
-            <p className="mt-4 text-lg font-semibold text-sky-100 sm:text-2xl">{t.tagline}</p>
-            <p className="mt-4 max-w-lg text-sm leading-7 text-slate-300 sm:text-base">{t.subtitle}</p>
-            <p className="mt-5 max-w-lg rounded-xl border border-amber-200/10 bg-amber-100/[0.035] p-3 text-xs leading-6 text-amber-100/70">{t.simulationLimit}</p>
-            <ModelDisclosure />
-          </div>
-          <p className="relative text-xs text-slate-400">{t.footer}</p>
-        </div>
-
-        <div className="p-6 sm:p-10 lg:p-12" dir={isArabic ? 'rtl' : 'ltr'}>
-          <div className="mb-8">
-            <p className="text-xs font-bold tracking-[0.2em] text-cyan-300">{t.flightPlanLabel}</p>
-            <h2 className="mt-2 text-2xl font-black sm:text-3xl">{modeChosen ? (missionMode === 'education' ? t.educationSection : t.simulationSection) : t.chooseMode}</h2>
-            {modeChosen ? <p className="mt-2 text-xs text-slate-500">
+      <section className={`mission-start-card relative z-10 grid w-full max-w-6xl lg:grid-cols-[1fr_0.92fr]${modeChosen ? ' overflow-hidden rounded-[1.25rem] border border-white/10 bg-[#141510]' : ''}`}>
+        <div className="mission-start-options p-6 sm:p-10 lg:p-12" dir={isArabic ? 'rtl' : 'ltr'}>
+          {modeChosen ? <div className="mission-setup-heading mb-8">
+            <p className="mission-setup-eyebrow">{missionMode === 'simulation' ? (isArabic ? 'وحدة التحكم · فحص ما قبل الرحلة' : 'MISSION COMMAND · PREFLIGHT CONSOLE') : t.flightPlanLabel}</p>
+            <h2 className="mt-2 text-2xl font-black sm:text-3xl">{missionMode === 'education' ? t.educationSection : (isArabic ? 'تكوين المهمة' : 'Mission Configuration')}</h2>
+            {missionMode === 'simulation' ? <p className="mt-2 text-xs leading-5 text-slate-400">{isArabic ? 'تحقق من الوجهة والطاقم وملف المهمة قبل بدء التسلسل.' : 'Verify the destination, crew, and mission profile before starting the launch sequence.'}</p> : null}
+            <p className="mt-2 text-xs text-slate-500">
               {missionMode === 'simulation'
                 ? `${destination === 'moon'
                   ? maxDays <= 30
@@ -295,82 +441,104 @@ export function StartScreen() {
                     ? (isArabic ? 'رحلة معارضة إلى المريخ' : 'Mars opposition mission')
                     : (isArabic ? 'رحلة اقتران إلى المريخ' : 'Mars conjunction mission')} · ${maxDays} ${isArabic ? 'يومًا' : 'days'} · `
                 : ''}{t.cycleSinglePlayerNote}
-            </p> : null}
-            {modeChosen ? <p className="mt-3 border-s border-cyan-200/40 bg-white/[0.02] px-3 py-2 text-xs leading-5 text-slate-400">{t.singlePlayerNote}</p> : null}
-          </div>
+            </p>
+            <p className="mt-3 border-s border-cyan-200/40 bg-white/[0.02] px-3 py-2 text-xs leading-5 text-slate-400">{t.singlePlayerNote}</p>
+          </div> : null}
 
           {!modeChosen ? (
             <fieldset className="mb-7">
               <legend className="mb-3 text-sm font-bold text-slate-200">{t.chooseMode}</legend>
               <div className="grid gap-3 sm:grid-cols-2">
                 {([
-                  { id: 'education' as const, title: t.educationSection, description: t.educationDescription, icon: '👩‍🚀', note: t.guidedRecommendation },
-                  { id: 'simulation' as const, title: t.simulationSection, description: t.simulationDescription, icon: '🛰️', note: t.simulationRecommendation },
+                  { id: 'education' as const, title: t.trainingModulesLabel, description: t.educationDescription, icon: BookOpen, cta: t.learnExploreCta, note: t.guidedRecommendation },
+                  { id: 'simulation' as const, title: t.realTimeSimulationLabel, description: t.simulationDescription, icon: Radar, cta: t.startRealMissionCta, note: t.simulationRecommendation },
                 ]).map((mode) => (
                   <button
                     key={mode.id}
                     type="button"
                     onClick={() => chooseMode(mode.id)}
-                    className="rounded-xl border border-white/10 bg-white/[0.02] p-4 text-start text-slate-300 transition hover:border-cyan-200/40 hover:bg-cyan-100/[0.05]"
+                    className={`mission-mode-card mission-mode-card-${mode.id} flex h-full flex-col items-center justify-between gap-4 p-6`}
                   >
-                    <span className="text-xl">{mode.icon}</span>
-                    <span className="mt-2 block text-sm font-bold">{mode.title}</span>
-                    <span className="mt-1 block text-xs leading-5 text-slate-400">{mode.description}</span>
-                    <span className="mt-2 block text-[10px] leading-5 text-cyan-100/70">{mode.note}</span>
+                    <span className="mission-mode-icon"><mode.icon size={25} strokeWidth={1.6} /></span>
+                    <span className="mission-mode-title">{mode.title}</span>
+                    <span className="mission-mode-description">{mode.description}</span>
+                    <span className="mission-mode-note">{mode.note}</span>
+                    <span className="mission-mode-cta">{mode.cta}<DirectionIcon size={15} /></span>
                   </button>
                 ))}
               </div>
             </fieldset>
           ) : (
             <>
-          <button type="button" onClick={() => setModeChosen(false)} className="secondary-button mb-5 !px-3 !py-2 text-xs">
-            {t.changeMissionMode}
-          </button>
-          <details className="mb-6 rounded-xl border border-sky-200/15 bg-sky-100/[0.035] p-4">
-            <summary className="cursor-pointer text-sm font-bold text-sky-100">{t.howToPlayTitle} · {t.eventGuideTitle}</summary>
-            <p className="mt-3 text-xs leading-6 text-slate-300">{t.howToPlaySteps}</p>
-            <p className="mt-2 text-xs leading-6 text-slate-400">{t.eventGuideSteps}</p>
-            <details className="mt-3 rounded-lg border border-white/[0.07] bg-slate-950/30 p-3">
-              <summary className="cursor-pointer text-xs font-bold text-slate-200">{t.eventPlaybookLabel} · {EVENTS.length}</summary>
-              <div className="mt-3 space-y-3">
-                {EVENTS.map((event) => (
-                  <article key={event.id} className="border-s border-amber-200/20 ps-3">
-                    <h3 className="text-xs font-bold text-amber-100">{event.icon} {event.title[language]}</h3>
-                    <p className="mt-1 text-[11px] leading-5 text-slate-400">{event.description[language]}</p>
-                    <ul className="mt-1 space-y-1 text-[11px] leading-5 text-slate-500">
-                      {event.choices.map((choice) => <li key={choice.label.en}>• {choice.label[language]}</li>)}
-                    </ul>
-                  </article>
-                ))}
-              </div>
-            </details>
-            <p className="mt-3 text-[11px] leading-5 text-amber-100/70">{t.failureGuide}</p>
-          </details>
-
           {missionMode === 'simulation' ? <>
-          {isStepVisible('destination') ? <fieldset className="mb-6">
+          <div className="mission-setup-workspace" dir={isArabic ? 'rtl' : 'ltr'}>
+            <aside className="setup-orbit-preview" aria-label={isArabic ? 'معاينة مسار الرحلة' : 'Orbital transfer preview'}>
+              <div className="setup-orbit-preview-heading">
+                <span className="mission-live-dot" aria-hidden="true" />
+                <div>
+                  <p>{isArabic ? 'معاينة المسار' : 'MISSION TRAJECTORY'}</p>
+                  <strong>{destination === 'moon' ? t.moon : t.mars}</strong>
+                </div>
+              </div>
+              <OrbitalTransferVisualizer destination={destination} onDestinationChange={handleDestinationChange} />
+            </aside>
+            <section className="mission-setup-controls" aria-label={isArabic ? 'خيارات إعداد المهمة' : 'Mission setup options'}>
+              <nav className="mission-setup-progress" aria-label={isArabic ? 'خطوات إعداد المهمة' : 'Mission setup steps'}>
+                {visibleSetupSteps.map((step, index) => (
+                  <button
+                    type="button"
+                    key={step}
+                    className={`mission-setup-progress-step${index % 2 === 0 ? ' is-label-top' : ' is-label-bottom'}${setupStepComplete[step] ? ' is-complete' : ' is-pending'}${activeSetupStep === step ? ' is-current' : ''}`}
+                    aria-label={`${index + 1}. ${setupLabels[step]}: ${setupStepComplete[step] ? (isArabic ? 'مكتمل' : 'complete') : (isArabic ? 'قيد الانتظار' : 'pending')}`}
+                    aria-current={activeSetupStep === step ? 'step' : undefined}
+                    disabled={index > activeStepIndex || (index < activeStepIndex && !setupStepComplete[step])}
+                    onClick={() => navigateSetup(step)}
+                  >
+                    <span className="mission-setup-progress-label">
+                      <span>{index + 1}.</span> {setupProgressLabels[step]}
+                    </span>
+                    <span className="mission-setup-progress-node" aria-hidden="true" />
+                  </button>
+                ))}
+              </nav>
+              <div className="mission-setup-track" dir={isArabic ? 'rtl' : 'ltr'}>
+          <fieldset id="setup-destination" className="mission-setup-card" hidden={activeSetupStep !== 'destination'}>
             <legend className="mb-3 text-sm font-bold text-slate-200">{t.destination}</legend>
-            <div className="grid grid-cols-2 gap-3">
-              {(['moon', 'mars'] as const).map((target) => (
+            <div className="setup-destination-choices" role="group" aria-label={t.destination}>
+              {([
+                {
+                  id: 'moon' as const,
+                  name: t.moon,
+                  description: isArabic ? 'ميدان الاختبار التكتيكي' : 'Tactical Proving Ground',
+                },
+                {
+                  id: 'mars' as const,
+                  name: t.mars,
+                  description: isArabic ? 'الأفق الرئيسي' : 'Primary Horizon',
+                },
+              ]).map((option) => (
                 <button
-                  key={target}
+                  key={option.id}
                   type="button"
+                  className={`setup-destination-choice${destination === option.id ? ' is-selected' : ''}`}
                   onClick={() => {
-                    setDestination(target)
-                    setSetupStep('mission-objective')
+                    handleDestinationChange(option.id)
+                    advanceAfterChoice('destination', 'mission-objective')
                   }}
-                  className={`planet-choice ${destination === target ? 'planet-choice-active' : ''}`}
-                  aria-pressed={destination === target}
+                  aria-pressed={destination === option.id}
                 >
-                  <span className="text-3xl">{target === 'moon' ? '🌙' : '🔴'}</span>
-                  <span className="mt-2 font-bold">{target === 'moon' ? t.moon : t.mars}</span>
-                  <span className="mt-1 text-xs text-slate-400">{target === 'moon' ? '384,400 km' : '225M km avg.'}</span>
+                  <span className={`setup-planet-preview setup-planet-${option.id}`} aria-hidden="true" />
+                  <span className="setup-destination-choice-copy">
+                    <strong>{option.name}</strong>
+                    <span>{option.description}</span>
+                  </span>
                 </button>
               ))}
             </div>
-          </fieldset> : null}
+            {renderNextStep('destination')}
+          </fieldset>
 
-          {isStepVisible('mission-objective') ? <fieldset className="mb-6">
+          <fieldset id="setup-mission-objective" className="mission-setup-card" hidden={activeSetupStep !== 'mission-objective'}>
             <legend className="mb-2 text-sm font-bold text-slate-200">{t.missionObjective}</legend>
             <div className="grid grid-cols-2 gap-2">
               {missionObjectiveChoices.map((profileId) => {
@@ -382,7 +550,7 @@ export function StartScreen() {
                   onClick={() => {
                     setMissionType(profileId)
                     setObjective(profile.objective)
-                    setSetupStep('crew-size')
+                    advanceAfterChoice('mission-objective', 'crew-size')
                   }}
                   className={`rounded-xl border px-3 py-3 text-start text-sm font-bold transition ${missionType === profileId ? 'border-cyan-300/60 bg-cyan-300/10 text-cyan-100' : 'border-white/10 bg-white/[0.03] text-slate-400 hover:bg-white/[0.06]'}`}
                   aria-pressed={missionType === profileId}
@@ -448,10 +616,38 @@ export function StartScreen() {
                 </div>
               </div>
             </section>
-          </fieldset> : null}
+            {renderNextStep('mission-objective')}
+          </fieldset>
 
-          {isStepVisible('crew-size') ? <div className="mb-6">
+          <div id="setup-crew-size" className="mission-setup-card" hidden={activeSetupStep !== 'crew-size'}>
             <label htmlFor="crew-size" className="mb-2 block text-sm font-bold text-slate-200">{t.crew}</label>
+            <div className="mission-crew-slider-card">
+              <div className="flex items-end justify-between gap-3">
+                <span className="text-xs text-slate-400">{isArabic ? 'حجم الطاقم' : 'CREW COMPLEMENT'}</span>
+                <strong>{crewSize} <span>{t.crew}</span></strong>
+              </div>
+              <input
+                id="crew-size"
+                type="range"
+                min={0}
+                max={Math.max(0, allowedCrewSizes.length - 1)}
+                step={1}
+                value={Math.max(0, allowedCrewSizes.indexOf(crewSize))}
+                aria-valuetext={`${crewSize} ${t.crew}`}
+                aria-label={t.crew}
+                disabled={allowedCrewSizes.length < 2}
+                onChange={(event) => {
+                  const nextSize = allowedCrewSizes[Number(event.currentTarget.value)]
+                  if (nextSize !== undefined) {
+                    setCrewSize(nextSize)
+                    advanceAfterChoice('crew-size', 'control-mode')
+                  }
+                }}
+              />
+              <div className="flex justify-between text-[10px] text-slate-500" aria-hidden="true">
+                {allowedCrewSizes.map((size) => <span key={size}>{size}</span>)}
+              </div>
+            </div>
             <div className="grid grid-cols-4 gap-2">
               {allowedCrewSizes.map((size) => (
                 <button
@@ -459,7 +655,7 @@ export function StartScreen() {
                   type="button"
                   onClick={() => {
                     setCrewSize(size)
-                    setSetupStep('control-mode')
+                    advanceAfterChoice('crew-size', 'control-mode')
                   }}
                   className={`rounded-md border px-3 py-3 text-sm font-bold transition ${crewSize === size ? 'border-cyan-200/50 bg-cyan-100/[0.06] text-cyan-100' : 'border-white/10 bg-white/[0.02] text-slate-400 hover:bg-white/[0.05]'}`}
                   aria-pressed={crewSize === size}
@@ -478,9 +674,10 @@ export function StartScreen() {
                 </ul>
               </div>
             ) : null}
-          </div> : null}
+            {renderNextStep('crew-size')}
+          </div>
 
-          {isStepVisible('control-mode') ? <fieldset className="mb-7">
+          <fieldset id="setup-control-mode" className="mission-setup-card" hidden={activeSetupStep !== 'control-mode'}>
             <legend className="mb-3 text-sm font-bold text-slate-200">{t.controlStyleTitle}</legend>
             <div className="grid gap-3 sm:grid-cols-2">
               {(['full', 'specialist'] as const).map((style) => (
@@ -489,20 +686,28 @@ export function StartScreen() {
                   type="button"
                   onClick={() => {
                     setControlMode(style)
-                    setSetupStep(style === 'specialist' ? 'specialist-role' : 'mission-details')
+                    advanceAfterChoice('control-mode', style === 'specialist' ? 'specialist-role' : 'mission-details')
                   }}
                   aria-pressed={controlMode === style}
-                  className={`rounded-xl border p-4 text-start transition ${controlMode === style ? 'border-cyan-200/50 bg-cyan-100/[0.07] text-cyan-50' : 'border-white/10 bg-white/[0.02] text-slate-300 hover:bg-white/[0.05]'}`}
+                  className={`rounded-xl border p-4 text-start transition disabled:cursor-not-allowed disabled:opacity-50 ${controlMode === style ? 'border-cyan-200/50 bg-cyan-100/[0.07] text-cyan-50' : 'border-white/10 bg-white/[0.02] text-slate-300 hover:bg-white/[0.05]'}`}
                 >
-                  <span className="block text-sm font-bold">{style === 'full' ? t.fullControlTitle : t.specialistControlTitle}</span>
+                  <span className="block text-sm font-bold">{style === 'full' ? (isArabic ? 'الساحة الكاملة · تحكم كامل بالطاقم' : 'Full Sandbox · Full Crew Control') : t.specialistControlTitle}</span>
                   <span className="mt-1 block text-xs leading-5 text-slate-400">{style === 'full' ? t.fullControlDescription : t.specialistControlDescription}</span>
                 </button>
               ))}
             </div>
-          </fieldset> : null}
+            {renderNextStep('control-mode')}
+          </fieldset>
 
-          {controlMode === 'specialist' && isStepVisible('specialist-role') ? <fieldset className="mb-7">
+          {controlMode === 'specialist' ? <fieldset id="setup-specialist-role" className="mission-setup-card" hidden={activeSetupStep !== 'specialist-role'}>
             <legend className="mb-3 text-sm font-bold text-slate-200">{isArabic ? 'اختر دورك في الطاقم' : 'Choose your crew role'}</legend>
+            {crewDuties.filter((duty) => duty.specialty === 'command').length > 1 ? (
+              <p className="mb-3 rounded-lg border border-cyan-200/15 bg-cyan-100/[0.035] px-3 py-2 text-xs leading-5 text-cyan-100/80">
+                {isArabic
+                  ? 'يتضمن تشكيل الطاقم قائدًا ومساعد قائد. اختر الدور الذي تريد التحكم به.'
+                  : 'This crew roster has a Commander and Co-Commander. Choose which role you want to control.'}
+              </p>
+            ) : null}
             <div className="grid grid-cols-2 gap-2">
               {crewDuties.map((duty) => {
                 const role = CREW_ROLES.find((candidate) => candidate.id === duty.controlRole)
@@ -513,7 +718,7 @@ export function StartScreen() {
                     type="button"
                     onClick={() => {
                       setControlledDuty(duty.id)
-                      setSetupStep('mission-details')
+                      advanceAfterChoice('specialist-role', 'mission-details')
                     }}
                     aria-pressed={controlledDutyId === duty.id}
                     className={`rounded-lg border px-3 py-3 text-start transition ${controlledDutyId === duty.id ? 'border-violet-200/50 bg-violet-100/[0.07] text-violet-100' : 'border-white/10 bg-white/[0.02] text-slate-400'}`}
@@ -526,9 +731,10 @@ export function StartScreen() {
                 )
               })}
             </div>
+            {renderNextStep('specialist-role')}
           </fieldset> : null}
 
-          {isStepVisible('mission-details') ? <fieldset className="mb-6">
+          <fieldset id="setup-mission-details" className="mission-setup-card" hidden={activeSetupStep !== 'mission-details'}>
             <legend className="mb-2 text-sm font-bold text-slate-200">{t.scenarioLabel}</legend>
             <div className="grid gap-2">
               {(Object.keys(SCENARIOS) as ScenarioId[]).map((scenarioId) => (
@@ -538,6 +744,7 @@ export function StartScreen() {
                   onClick={() => {
                     setScenario(scenarioId)
                     playScenario(scenarioId)
+                    advanceAfterChoice('mission-details', 'difficulty')
                   }}
                   className={`scenario-choice flex items-start gap-3 border px-3 py-3 text-start transition ${scenario === scenarioId ? 'scenario-choice-active border-cyan-200/50 bg-cyan-100/[0.06] text-cyan-50' : 'border-white/10 bg-white/[0.02] text-slate-400 hover:border-white/20'}`}
                   aria-pressed={scenario === scenarioId}
@@ -554,12 +761,10 @@ export function StartScreen() {
               <p className="mb-2 text-sm font-bold text-slate-200">{t.missionObjective}: {missionProfile.goal[language]}</p>
               <p className="text-xs leading-5 text-slate-400">{missionProfile.goalDescription[language]}</p>
             </div>
-            <button type="button" onClick={() => setSetupStep('difficulty')} className="secondary-button mt-4 w-full justify-center">
-              {isArabic ? 'متابعة إلى الصعوبة' : 'Continue to difficulty'}
-            </button>
-          </fieldset> : null}
+            {renderNextStep('mission-details')}
+          </fieldset>
 
-          {isStepVisible('difficulty') ? <fieldset className="mb-6">
+          <fieldset id="setup-difficulty" className="mission-setup-card" hidden={activeSetupStep !== 'difficulty'}>
             <legend className="mb-2 text-sm font-bold text-slate-200">{t.difficulty}</legend>
             <div className="grid grid-cols-3 gap-2">
               {(['easy', 'normal', 'hard'] as const).map((level) => (
@@ -568,63 +773,59 @@ export function StartScreen() {
                   type="button"
                   onClick={() => {
                     setDifficulty(level)
-                    setSetupStep('base-name')
+                    advanceAfterChoice('difficulty', 'base-name')
                   }}
                   className={`rounded-md border px-2 py-3 text-sm font-bold transition ${difficulty === level ? 'border-cyan-200/50 bg-cyan-100/[0.06] text-cyan-100' : 'border-white/10 bg-white/[0.02] text-slate-400 hover:bg-white/[0.05]'}`}
                   aria-pressed={difficulty === level}
                 >
-                  {level === 'easy' ? '🟢 ' : level === 'normal' ? '🟡 ' : '🔴 '}{t[level]}
+                  <span className={`setup-difficulty-indicator is-${level}`} aria-hidden="true" />
+                  {t[level]}
+                  <small className="setup-difficulty-recovery">{level === 'easy' ? '98%' : level === 'normal' ? '94%' : '90%'} {isArabic ? 'استرداد ماء' : 'water recovery'}</small>
                 </button>
               ))}
             </div>
             <p className="mt-2 text-xs leading-5 text-slate-500">{t.difficultyDescription[difficulty]}</p>
-          </fieldset> : null}
+            {renderNextStep('difficulty')}
+          </fieldset>
 
-          </> : (
-            <section className="mb-7 rounded-xl border border-cyan-200/15 bg-cyan-100/[0.035] p-4">
-              <p className="text-sm font-bold text-cyan-100">👩‍🚀 {t.educationSection}</p>
-              <p className="mt-2 text-xs leading-6 text-slate-300">{t.educationDescription}</p>
-            </section>
-          )}
-
-          {(missionMode !== 'simulation' || isStepVisible('base-name')) ? <div className="mb-7">
-            <fieldset className="mb-5 rounded-xl border border-cyan-200/15 bg-cyan-100/[0.035] p-4">
-              <legend className="px-2 text-sm font-bold text-cyan-100">{t.astronautProfileTitle}</legend>
-              <label className="block text-[11px] font-bold text-slate-200" htmlFor="astronaut-name">
-                {t.astronautName}
-                <input
-                  id="astronaut-name"
-                  value={astronautName}
-                  onChange={(event) => setAstronautName(event.target.value)}
-                  maxLength={40}
-                  autoComplete="name"
-                  placeholder={t.astronautNamePlaceholder}
-                  className="mt-1 w-full rounded-lg border border-white/10 bg-slate-950/60 px-3 py-2 text-sm font-normal text-white placeholder:text-slate-600"
-                />
-              </label>
-              <p className="mt-2 text-[10px] text-slate-400">
-                {t.astronautDuty}: {localizeCrewRole(crewDuties.find((duty) => duty.id === astronautDutyId)?.title || crewDuties[0]?.title || t.astronautDefaultName, language)}
-              </p>
-            </fieldset>
-            <label htmlFor="base-name" className="mb-2 block text-sm font-bold text-slate-200">
-              {t.baseName} <span className="font-normal text-cyan-200">*</span>
+          <section id="setup-base-name" className="mission-setup-card" hidden={activeSetupStep !== 'base-name'}>
+          <div className="mission-base-form-scroll">
+          <fieldset className="mb-5 rounded-xl border border-cyan-200/15 bg-cyan-100/[0.035] p-4">
+            <legend className="px-2 text-sm font-bold text-cyan-100">{t.astronautProfileTitle}</legend>
+            <label className="block text-[11px] font-bold text-slate-200" htmlFor="astronaut-name">
+              {t.astronautName}
+              <input
+                id="astronaut-name"
+                value={astronautName}
+                onChange={(event) => setAstronautName(event.target.value)}
+                maxLength={40}
+                autoComplete="name"
+                placeholder={t.astronautNamePlaceholder}
+                className="mt-1 w-full rounded-lg border border-white/10 bg-slate-950/60 px-3 py-2 text-sm font-normal text-white placeholder:text-slate-600"
+              />
             </label>
-            <input
-              id="base-name"
-              value={baseName}
-              onChange={(event) => {
-                setBaseName(event.target.value)
-                if (event.target.value.trim()) setLoadError('')
-              }}
-              maxLength={32}
-              placeholder={t.basePlaceholder}
-              required
-              aria-invalid={Boolean(loadError && !baseName.trim())}
-              className="w-full rounded-md border border-white/10 bg-[#0b1725] px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-200/50 focus:ring-2 focus:ring-cyan-200/10"
-            />
-          </div> : null}
-
-          {missionMode === 'simulation' && isStepVisible('base-name') ? <div className="mb-7">
+            <p className="mt-2 text-[10px] text-slate-400">
+              {t.astronautDuty}: {localizeCrewRole(crewDuties.find((duty) => duty.id === astronautDutyId)?.title || crewDuties[0]?.title || t.astronautDefaultName, language)}
+            </p>
+          </fieldset>
+          <label htmlFor="base-name" className="mb-2 block text-sm font-bold text-slate-200">
+            {t.baseName} <span className="font-normal text-cyan-200">*</span>
+          </label>
+          <input
+            id="base-name"
+            value={baseName}
+            onChange={(event) => {
+              setBaseName(event.target.value)
+              if (event.target.value.trim()) setLoadError('')
+            }}
+            maxLength={32}
+            placeholder={t.basePlaceholder}
+            required
+            aria-invalid={Boolean(loadError && !baseName.trim())}
+            className="w-full rounded-md border border-white/10 bg-[#0b1725] px-4 py-3 text-sm text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-200/50 focus:ring-2 focus:ring-cyan-200/10"
+          />
+          {!isFormValid && !loadError ? <p className="mt-2 text-xs text-amber-200">{t.baseNameRequired}</p> : null}
+          <div className="mt-6">
             <label htmlFor="mission-seed" className="mb-2 block text-sm font-bold text-slate-200">{t.scenarioSeed}</label>
             <div className="flex gap-2">
               <input
@@ -648,15 +849,7 @@ export function StartScreen() {
               </button>
             </div>
             <p className="mt-2 text-xs leading-5 text-slate-500">{seedCopied ? t.seedCopied : t.seedDescription}</p>
-          </div> : null}
-
-          {(missionMode !== 'simulation' || isStepVisible('base-name')) ? <button ref={launchButtonRef} type="button" onClick={handleLaunch} className="primary-button w-full" disabled={launching}>
-            <Rocket size={18} />
-            {t.launch}
-            <DirectionIcon size={17} />
-          </button> : null}
-          {loadError ? <p role="alert" className="mt-3 text-xs text-rose-300">{loadError}</p> : null}
-
+          </div>
           {savedGame ? (
             <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200/15 bg-amber-100/[0.04] p-4">
               <div>
@@ -675,6 +868,60 @@ export function StartScreen() {
               </div>
             </div>
           ) : null}
+          </div>
+          <footer className="mission-launch-footer">
+          {loadError ? <p role="alert" className="mb-2 text-xs text-rose-300">{loadError}</p> : null}
+          <button ref={launchButtonRef} type="button" onClick={handleLaunch} className="primary-button mission-initialize-button w-full" disabled={!isFormValid || launching}>
+            <Rocket size={18} />
+            {launching ? (isArabic ? 'جارٍ تهيئة الإطلاق…' : 'INITIALIZING LAUNCH…') : (isArabic ? 'تهيئة إطلاق المهمة' : 'INITIALIZE MISSION LAUNCH')}
+            <DirectionIcon size={17} />
+          </button>
+          </footer>
+          </section>
+          </div>
+            </section>
+          </div>
+          </> : (
+            <section className="mx-auto w-full max-w-2xl rounded-xl border border-cyan-200/15 bg-cyan-100/[0.035] p-5">
+              <p className="text-sm font-bold text-cyan-100">👩‍🚀 {t.educationSection}</p>
+              <p className="mt-2 text-xs leading-6 text-slate-300">{t.educationDescription}</p>
+              <label className="mt-5 block text-[11px] font-bold text-slate-200" htmlFor="astronaut-name">
+                {t.astronautName}
+                <input
+                  id="astronaut-name"
+                  value={astronautName}
+                  onChange={(event) => setAstronautName(event.target.value)}
+                  maxLength={40}
+                  autoComplete="name"
+                  placeholder={t.astronautNamePlaceholder}
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-slate-950/60 px-3 py-2 text-sm font-normal text-white placeholder:text-slate-600"
+                />
+              </label>
+              <label htmlFor="base-name" className="mt-4 block text-[11px] font-bold text-slate-200">
+                {t.baseName} <span className="font-normal text-cyan-200">*</span>
+                <input
+                  id="base-name"
+                  value={baseName}
+                  onChange={(event) => {
+                    setBaseName(event.target.value)
+                    if (event.target.value.trim()) setLoadError('')
+                  }}
+                  maxLength={32}
+                  placeholder={t.basePlaceholder}
+                  required
+                  aria-invalid={Boolean(loadError && !baseName.trim())}
+                  className="mt-1 w-full rounded-lg border border-white/10 bg-slate-950/60 px-3 py-2 text-sm font-normal text-white placeholder:text-slate-600"
+                />
+              </label>
+              <button ref={launchButtonRef} type="button" onClick={handleLaunch} className="primary-button mission-initialize-button mt-5 w-full" disabled={launching}>
+                <Rocket size={18} />
+                {launching ? (isArabic ? 'جارٍ تهيئة الإطلاق…' : 'INITIALIZING LAUNCH…') : t.launch}
+                <DirectionIcon size={17} />
+              </button>
+              {loadError ? <p role="alert" className="mt-3 text-xs text-rose-300">{loadError}</p> : null}
+            </section>
+          )}
+
             </>
           )}
         </div>

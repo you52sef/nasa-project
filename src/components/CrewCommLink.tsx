@@ -14,7 +14,7 @@ export function CrewCommLink({ state }: { state: GameState }) {
   const sendRequest = useGameStore((store) => store.sendCrewRequest)
   const arabic = language === 'ar'
   const duties = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays)
-    .filter((duty) => state.controlMode !== 'specialist' || duty.id !== state.controlledDutyId)
+    .filter((duty) => duty.id !== state.controlledDutyId)
   const [targetDutyId, setTargetDutyId] = useState('')
   const target = duties.find((duty) => duty.id === targetDutyId)
   const targetActions = target ? getCrewRequestActions(state, target.id) : []
@@ -28,9 +28,8 @@ export function CrewCommLink({ state }: { state: GameState }) {
 
   useEffect(() => {
     if (duties.some((duty) => duty.id === targetDutyId)) return
-    const defaultDuty = duties.find((duty) => duty.id === state.astronautDutyId) || duties[0]
-    setTargetDutyId(defaultDuty?.id || '')
-  }, [targetDutyId, state.astronautDutyId, state.crewSize, state.destination, state.maxDays, state.controlMode, state.controlledDutyId])
+    setTargetDutyId(duties[0]?.id || '')
+  }, [targetDutyId, state.crewSize, state.destination, state.maxDays, state.controlMode, state.controlledDutyId])
 
   const unavailable = state.missionPhase !== 'surface' || state.paused || state.isGameOver
   const send = (action: Action) => {
@@ -45,7 +44,7 @@ export function CrewCommLink({ state }: { state: GameState }) {
           <MessageCircle size={18} />
         </span>
         <div className="min-w-0">
-          <p className="text-[10px] font-black uppercase tracking-[0.16em] text-cyan-200/70">CREW COMM-LINK</p>
+          <p className="text-[10px] font-black uppercase tracking-[0.16em] text-cyan-200/70">COMMAND DISPATCH</p>
           <h2 className="mt-1 text-sm font-black text-white">{t.crewCommTitle}</h2>
           <p className="mt-1 text-[10px] leading-5 text-slate-400">{t.crewCommPrompt}</p>
         </div>

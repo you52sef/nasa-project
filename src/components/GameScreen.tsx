@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Activity, BarChart3, BatteryCharging, BookOpen, Boxes, Clock3, Database, HardHat, Home, MessageCircle, Radio, Save, Send, Settings2, StopCircle, Users, Volume2, VolumeX, Wrench, X } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import { Activity, AlertTriangle, BarChart3, BatteryCharging, Bell, BookOpen, Boxes, Clock3, Database, HardHat, Home, MessageCircle, Moon, Radio, Save, Send, Settings2, StopCircle, Users, Volume2, VolumeX, Wrench, X } from 'lucide-react'
 import type { GameState } from '../game/model'
-import { canSleepAndAdvance, canWaitUntilBedtime, getCompletedWorkShifts, getEnergyCapacity, getMarsCommunicationDelayMinutes, getObjectiveProgress, getObjectiveTarget, MISSION_BEDTIME } from '../game/model'
+import { canSleepAndAdvance, canWaitUntilBedtime, getCompletedWorkShifts, getControlledMissionSpecialization, getEnergyCapacity, getMarsCommunicationDelayMinutes, getObjectiveProgress, getObjectiveTarget, MISSION_BEDTIME } from '../game/model'
+import { BUILDINGS } from '../game/buildings'
+import { EVENTS } from '../game/events'
 import { getCrewDailyRoutine } from '../game/constants'
 import ar from '../i18n/ar'
 import en from '../i18n/en'
@@ -16,7 +19,6 @@ import { BuildingMenu } from './BuildingMenu'
 import { ForecastTable } from './ForecastTable'
 import { CrewReadiness } from './CrewReadiness'
 import { useSound } from '../hooks/useSound'
-import { TutorialGuide } from './TutorialGuide'
 import { AchievementsPanel } from './AchievementsPanel'
 import { SCENARIOS } from '../game/scenarios'
 import { MissionLog } from './MissionLog'
@@ -36,11 +38,12 @@ import { AstronautProfileHud } from './AstronautProfileHud'
 import { MISSION_PROFILES } from '../game/missionProfiles'
 import { EveningDebrief } from './EveningDebrief'
 import { CrewCommLink } from './CrewCommLink'
+import { HowToPlayGuide } from './HowToPlayGuide'
 
 import { getAccessibleMissionPanels } from '../game/teamwork'
 import type { MissionPanelId } from '../game/teamwork'
 
-type MissionSidePanel = MissionPanelId
+type MissionSidePanel = MissionPanelId | 'notifications'
 
 export function GameScreen({ state }: { state: GameState }) {
   const language = useSettingsStore((store) => store.language)
@@ -54,6 +57,8 @@ export function GameScreen({ state }: { state: GameState }) {
   const markTutorialStep = useGameStore((store) => store.markTutorialStep)
   const pauseAndReturnToMain = useGameStore((store) => store.pauseAndReturnToMain)
   const endMission = useGameStore((store) => store.endMission)
+  const setControlledDuty = useGameStore((store) => store.setControlledDuty)
+  const reassignCrewSpecialty = useGameStore((store) => store.reassignCrewSpecialty)
   const [schoolOpen, setSchoolOpen] = useState(false)
   const [dataOriginsOpen, setDataOriginsOpen] = useState(false)
   const [notice, setNotice] = useState('')
@@ -61,6 +66,7 @@ export function GameScreen({ state }: { state: GameState }) {
   const [sleeping, setSleeping] = useState(false)
   const [surfaceArrival, setSurfaceArrival] = useState(false)
   const [sidePanel, setSidePanel] = useState<MissionSidePanel | null>(null)
+  const [selectionResetToken, setSelectionResetToken] = useState(0)
   const [routineOpen, setRoutineOpen] = useState(false)
   const [queuedDebriefDay, setQueuedDebriefDay] = useState<number | null>(null)
   const sleepTimer = useRef<number | null>(null)
@@ -68,6 +74,9 @@ export function GameScreen({ state }: { state: GameState }) {
   const arrivalTimer = useRef<number | null>(null)
   const sleepInProgress = useRef(false)
   const oxygenAlertActive = useRef(false)
+  const closeMissionPanel = useCallback(() => {
+    setSidePanel(null)
+  }, [])
   const { soundEnabled, toggleSound, playSuccess, playLowOxygen, setAmbientEnabled, setSuitBreathingEnabled } = useSound()
   const isArabic = language === 'ar'
   const objectiveTitle = state.objective === 'tutorial'
@@ -79,17 +88,33 @@ export function GameScreen({ state }: { state: GameState }) {
   const acceptedCrewRequestsToday = state.crewCommunications
     .filter((request) => request.day === state.day && request.decision === 'accepted').length
   const activeRole = CREW_ROLES.find((role) => role.id === state.controlledRole)
-  const activeDuty = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays)
+  const crewAssignments = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays, state.crewSpecialtyOverrides)
+  const activeDuty = crewAssignments
     .find((duty) => duty.id === state.controlledDutyId)
   const accessiblePanels = getAccessibleMissionPanels(state)
-  const controlledSpecialty = activeDuty?.specialty
-  const canManageGreenhouse = state.controlMode !== 'specialist' ||
-    ['agriculture', 'agriculture-resources', 'geology-agriculture'].includes(activeDuty?.specialty || '')
-  const canManageFieldOperations = state.controlMode !== 'specialist' ||
-    ['command', 'pilot', 'science', 'engineering', 'power', 'resources', 'robotics', 'engineering-science', 'geology-agriculture', 'agriculture-resources'].includes(activeDuty?.specialty || '')
+  const visibleSidePanel: MissionSidePanel | null = sidePanel === 'notifications' ||
+    (sidePanel !== null && accessiblePanels.includes(sidePanel))
+    ? sidePanel
+    : null
+  const activeSpecialization = getControlledMissionSpecialization(state)
+  const canManageGreenhouse = activeSpecialization === 'biology'
+  const canTreatRegolith = activeSpecialization === 'geology'
+  const canManageFieldOperations = activeSpecialization === 'geology' ||
+    activeSpecialization === 'engineering' || activeSpecialization === 'command'
+  const canViewCrewReadiness = activeSpecialization === 'biology'
+  const canViewTelemetry = activeSpecialization === 'engineering'
+  const canViewSoilOperations = activeSpecialization === 'geology'
   const energyCapacity = getEnergyCapacity(state)
   const criticalResources = (['energy', 'oxygen', 'water', 'food', 'health'] as const)
     .filter((resource) => state.resources[resource] <= (resource === 'energy' ? energyCapacity : 100) * 0.25)
+  const offlineBuildings = (state.offlineBuildings || []).filter((id) => BUILDINGS[id])
+  const activeEventDefinition = state.activeEvent
+    ? EVENTS.find((event) => event.id === state.activeEvent?.id)
+    : undefined
+  const hasNotificationBadge = objectiveProgress < objectiveTarget ||
+    criticalResources.length > 0 ||
+    offlineBuildings.length > 0 ||
+    Boolean(state.activeEvent)
   const showNotice = (message: string) => {
     setNotice(message)
     if (noticeTimer.current !== null) window.clearTimeout(noticeTimer.current)
@@ -98,8 +123,6 @@ export function GameScreen({ state }: { state: GameState }) {
       noticeTimer.current = null
     }, 4500)
   }
-
-  if (state.isGameOver) return <EndScreen state={state} />
 
   const handleSave = () => {
     try {
@@ -134,9 +157,18 @@ export function GameScreen({ state }: { state: GameState }) {
     }
   }
 
-  const handleAction = (action: Parameters<typeof advanceDay>[0]) => {
+  const handleAction = useCallback((action: Parameters<typeof advanceDay>[0]) => {
     advanceDay(action)
-  }
+  }, [advanceDay])
+  const handleCrewReassignment = useCallback((dutyId: string, specialty: Parameters<typeof reassignCrewSpecialty>[1]) => {
+    try {
+      reassignCrewSpecialty(dutyId, specialty)
+      const message = useGameStore.getState().lastMessage
+      if (message) showNotice(message)
+    } catch (error) {
+      showNotice(error instanceof Error ? error.message : t.pauseSaveFailed)
+    }
+  }, [reassignCrewSpecialty, t.pauseSaveFailed])
   const handleSleep = () => {
     if (sleepInProgress.current || !canSleepAndAdvance(useGameStore.getState())) return
     sleepInProgress.current = true
@@ -172,6 +204,14 @@ export function GameScreen({ state }: { state: GameState }) {
     return () => setSuitBreathingEnabled(false)
   }, [setSuitBreathingEnabled, soundEnabled, state.activeOperation?.status])
   useEffect(() => {
+    if (!sidePanel) return
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setSidePanel(null)
+    }
+    document.addEventListener('keydown', closeOnEscape)
+    return () => document.removeEventListener('keydown', closeOnEscape)
+  }, [sidePanel])
+  useEffect(() => {
     const isCritical = state.resources.oxygen <= 25
     if (isCritical && !oxygenAlertActive.current) playLowOxygen()
     oxygenAlertActive.current = isCritical
@@ -202,10 +242,10 @@ export function GameScreen({ state }: { state: GameState }) {
       : 2)
   const reportQueued = latestReport?.earthTransmission?.status === 'queued' ||
     (!latestReport?.earthTransmission && state.destination === 'mars')
-  const panelDetails: Record<MissionSidePanel, { label: string; icon: typeof Database }> = {
+  const panelDetails: Record<MissionPanelId, { label: string; icon: typeof Database }> = {
     resources: { label: isArabic ? 'الموارد' : 'Resources', icon: Boxes },
     crew: { label: isArabic ? 'الطاقم' : 'Crew', icon: Users },
-    systems: { label: isArabic ? 'دعم الحياة والطاقة' : 'ECLSS & power', icon: BatteryCharging },
+    systems: { label: isArabic ? 'الأنظمة واستجابة الطوارئ' : 'Systems & emergency controls', icon: BatteryCharging },
     operations: { label: isArabic ? 'الأنشطة والعمليات' : 'Activities & operations', icon: Wrench },
     infrastructure: { label: isArabic ? 'المباني والإنشاء' : 'Buildings & construction', icon: HardHat },
     forecast: { label: isArabic ? 'توقع الموارد' : 'Resource forecast', icon: BarChart3 },
@@ -213,8 +253,8 @@ export function GameScreen({ state }: { state: GameState }) {
   }
 
   useEffect(() => {
-    if (sidePanel && !accessiblePanels.includes(sidePanel)) setSidePanel(null)
-  }, [sidePanel, state.controlMode, state.controlledDutyId, state.destination, state.crewSize, state.maxDays])
+    if (sidePanel && sidePanel !== 'notifications' && !accessiblePanels.includes(sidePanel)) setSidePanel(null)
+  }, [sidePanel, state.controlMode, state.controlledDutyId, state.crewSpecialtyOverrides, state.destination, state.crewSize, state.maxDays])
 
   useEffect(() => {
     if (sidePanel && state.missionPhase !== 'surface') setSidePanel(null)
@@ -229,25 +269,47 @@ export function GameScreen({ state }: { state: GameState }) {
     return () => document.removeEventListener('keydown', closeOnEscape)
   }, [sidePanel])
 
+  if (state.isGameOver) {
+    if (state.missionResult) return <EndScreen state={state} />
+    const fallbackState: GameState = {
+      ...state,
+      missionResult: 'failure',
+      lastMessage: isArabic
+        ? 'انتهت المهمة، لكن تعذر استعادة نتيجة صريحة. يعرض هذا التقرير بيانات الحالة المحفوظة.'
+        : 'The mission ended without a recorded outcome. This report uses the saved mission state.',
+    }
+    return (
+      <>
+        <p className="sr-only" role="status" aria-live="polite">
+          {isArabic ? 'جارٍ تجهيز تقرير المهمة من الحالة المحفوظة.' : 'Preparing the mission report from the saved mission state.'}
+        </p>
+        <EndScreen state={fallbackState} />
+      </>
+    )
+  }
+
   if (needsTransitDecision) {
     return <FlightExperience state={state} leg={transitLeg} onArrive={handleTransitArrival} />
   }
 
   return (
     <main className={`mission-game mission-command-screen mission-light-${timeOfDay}${surfaceArrival ? ' mission-base-arrival' : ''}${routineOpen ? ' mission-routine-expanded' : ''}`} dir={isArabic ? 'rtl' : 'ltr'}>
+      <OperationProgressRunner state={state} />
       <header className="mission-command-header">
-        <div className="mission-command-clock">
-          <span className="mission-command-destination" aria-hidden="true">{state.destination === 'moon' ? '🌙' : '🔴'}</span>
-          <div>
-            <h1>{state.baseName}</h1>
-            <p><Clock3 size={12} /> {state.destination === 'mars' ? 'Sol' : (isArabic ? 'اليوم' : 'LUNAR DAY')} {String(state.day).padStart(2, '0')} · <b dir="ltr">{clock}</b></p>
+        <div className="mission-command-identity">
+          <div className="mission-command-clock">
+            <span className="mission-command-destination" aria-hidden="true">{state.destination === 'moon' ? '🌙' : '🔴'}</span>
+            <div>
+              <h1>{state.baseName}</h1>
+              <p><Clock3 size={12} /> {state.destination === 'mars' ? 'Sol' : (isArabic ? 'اليوم' : 'LUNAR DAY')} {String(state.day).padStart(2, '0')} · <b dir="ltr">{clock}</b></p>
+            </div>
+            <span className={`mission-daylight-indicator is-${timeOfDay}`}><i />{isArabic ? (timeOfDay === 'night' ? 'ليل' : 'نهار') : timeOfDay}</span>
           </div>
-          <span className={`mission-daylight-indicator is-${timeOfDay}`}><i />{isArabic ? (timeOfDay === 'night' ? 'ليل' : 'نهار') : timeOfDay}</span>
+          <div className="mission-command-ticker"><MissionLog state={state} language={language} /></div>
         </div>
 
-        <div className="mission-command-ticker"><MissionLog state={state} language={language} /></div>
-
         <div className="mission-command-actions">
+          <HowToPlayGuide language={language} />
           <div className="mission-signal-readout" title={isArabic ? 'تأخير اتصال محاكى؛ لا يوجد إرسال شبكي فعلي.' : 'Modeled communication delay; no live network transmission.'}>
             <Radio size={14} aria-hidden="true" />
             <span>{state.destination === 'mars' ? `${isArabic ? 'تأخير المريخ' : 'MARS DELAY'} · ${signalDelay} ${isArabic ? 'د' : 'min'}` : `${isArabic ? 'وصلة القمر' : 'LUNAR LINK'} · 2 ${isArabic ? 'ث' : 's'}`}</span>
@@ -298,87 +360,169 @@ export function GameScreen({ state }: { state: GameState }) {
         </div>
       </header>
 
-      <section className="mission-command-map-stage" aria-label={t.siteMapLabel}>
+      <section className={`mission-command-map-stage${visibleSidePanel ? ' has-side-panel' : ''}`} aria-label={t.siteMapLabel}>
         <nav className="mission-side-rail" aria-label={isArabic ? 'لوحات التحكم' : 'Mission panels'}>
-          {(Object.entries(panelDetails) as [MissionSidePanel, typeof panelDetails[MissionSidePanel]][])
-            .filter(([id]) => accessiblePanels.includes(id))
+          <button
+            type="button"
+            className={`mission-side-rail-button mission-notification-trigger${visibleSidePanel === 'notifications' ? ' is-active' : ''}`}
+            aria-label={t.notificationsCenterTitle}
+            aria-pressed={visibleSidePanel === 'notifications'}
+            title={t.notificationsCenterTitle}
+            onClick={() => {
+              setSidePanel((current) => current === 'notifications' ? null : 'notifications')
+              setSelectionResetToken((token) => token + 1)
+            }}
+          >
+            <Bell size={21} aria-hidden="true" />
+            {hasNotificationBadge ? <span className="mission-notification-badge" aria-hidden="true" /> : null}
+          </button>
+          {(Object.entries(panelDetails) as [MissionPanelId, typeof panelDetails[MissionPanelId]][])
+            .filter(([id]) => id === 'crew' || accessiblePanels.includes(id))
             .map(([id, detail]) => {
             const Icon = detail.icon
             return (
               <button
                 key={id}
                 type="button"
-                className="mission-side-rail-button"
+                className={`mission-side-rail-button${id === 'operations' && state.day === 1 && (!state.todayActions.includes('exercise') || getCompletedWorkShifts(state.todayActions) < 2) ? ' is-first-run' : ''}`}
                 aria-label={detail.label}
-                aria-pressed={sidePanel === id}
+                aria-pressed={visibleSidePanel === id}
                 title={detail.label}
-                onClick={() => setSidePanel((current) => current === id ? null : id)}
+                onClick={() => {
+                  if (visibleSidePanel === id) {
+                    setSidePanel(null)
+                  } else {
+                    setSidePanel(id)
+                    setSelectionResetToken((token) => token + 1)
+                  }
+                }}
               >
                 <Icon size={19} aria-hidden="true" />
-                <span>{detail.label}</span>
-                {id === 'resources' && criticalResources.length ? <i className="mission-rail-alert" aria-label={isArabic ? 'تنبيه موارد' : 'Resource alert'} /> : null}
+                <span>
+                  {detail.label}
+                  {id === 'operations' && state.day === 1 && (!state.todayActions.includes('exercise') || getCompletedWorkShifts(state.todayActions) < 2)
+                    ? ` · ${isArabic ? 'ابدأ هنا' : 'START HERE'}`
+                    : ''}
+                </span>
               </button>
             )
           })}
         </nav>
 
         <div className="mission-command-map-wrap">
-          <BaseView state={state} onAction={handleAction} className="mission-command-map" />
-          <div className="mission-objective-chip" title={objectiveTitle}>
-            <span>{state.destination === 'moon' ? '🌙' : '🔴'} {objectiveTitle}</span>
-            <span>
-              {Math.min(objectiveProgress, objectiveTarget)} / {objectiveTarget} · {Math.round(objectiveProgressPercent)}%
-              {acceptedCrewRequestsToday ? ` · ${acceptedCrewRequestsToday} ${isArabic ? 'تكليفات مقبولة' : 'crew requests accepted'}` : ''}
-            </span>
-            <i><b style={{ width: `${objectiveProgressPercent}%` }} /></i>
-          </div>
-          {criticalResources.length ? (
-            <div className="mission-critical-strip" role="status" aria-live="polite">
-              <strong>{t.resourceAttentionTitle}</strong>
-              {criticalResources.map((resource) => (
-                <span key={resource}>
-                  {RESOURCE_META[resource].icon} {RESOURCE_META[resource].label[language]} · {formatResourceValue(resource, state.resources[resource], language)}
-                </span>
-              ))}
-            </div>
-          ) : null}
+          <BaseView
+            state={state}
+            onAction={handleAction}
+            onSelectionChange={closeMissionPanel}
+            selectionResetToken={selectionResetToken}
+            className="mission-command-map"
+          />
         </div>
 
-        {sidePanel ? (
-          <aside className="mission-side-drawer" aria-labelledby="mission-side-drawer-title">
+      </section>
+
+      {visibleSidePanel ? createPortal(
+        <div className="mission-panel-backdrop" dir={isArabic ? 'rtl' : 'ltr'}>
+          <aside className="mission-side-drawer" role="dialog" aria-labelledby="mission-side-drawer-title">
             <header>
-              <div><p>{isArabic ? 'مركز المهمة' : 'MISSION CONTROL'}</p><h2 id="mission-side-drawer-title">{panelDetails[sidePanel].label}</h2></div>
+              <div>
+                <p>{isArabic ? 'مركز المهمة' : 'MISSION CONTROL'}</p>
+                <h2 id="mission-side-drawer-title">{visibleSidePanel === 'notifications'
+                  ? t.notificationsCenterTitle
+                  : panelDetails[visibleSidePanel].label}</h2>
+              </div>
               <button type="button" onClick={() => setSidePanel(null)} aria-label={isArabic ? 'إغلاق اللوحة' : 'Close panel'}><X size={18} /></button>
             </header>
             <div className="mission-side-drawer-content">
-              {sidePanel === 'resources' ? <ResourceBar resources={state.resources} language={language} energyCapacity={energyCapacity} /> : null}
-              {sidePanel === 'crew' ? (
-                <div className="grid gap-3">
-                  <CrewReadiness state={state} language={language} />
-                  <CrewCouncil state={state} />
+              {visibleSidePanel === 'notifications' ? (
+                <div className="mission-notifications-content">
+                  <section className="mission-notification-card" aria-labelledby="mission-progress-title">
+                    <p className="mission-notification-eyebrow">{t.notificationsMissionProgress}</p>
+                    <h3 id="mission-progress-title">{objectiveTitle}</h3>
+                    <p className="mission-notification-copy">
+                      {isArabic ? `اليوم ${state.day} من ${state.maxDays}` : `Day ${state.day} of ${state.maxDays}`}
+                      {' · '}
+                      {Math.min(objectiveProgress, objectiveTarget)} / {objectiveTarget} · {Math.round(objectiveProgressPercent)}%
+                    </p>
+                    {acceptedCrewRequestsToday > 0 ? (
+                      <p className="mission-notification-copy">
+                        {acceptedCrewRequestsToday} {t.notificationsAcceptedRequests}
+                      </p>
+                    ) : null}
+                    <i className="mission-objective-progress-track">
+                      <b style={{ transform: `scaleX(${objectiveProgressPercent / 100})` }} />
+                    </i>
+                    {state.activeOperation?.status === 'active' ? (
+                      <p className="mission-notification-copy">
+                        {t.notificationsActiveOperation} · {state.activeOperation.id}
+                      </p>
+                    ) : null}
+                  </section>
+
+                  {state.activeEvent || criticalResources.length || offlineBuildings.length ? (
+                    <section className="mission-notification-alerts" aria-labelledby="mission-notification-alert-title">
+                      <h3 id="mission-notification-alert-title"><AlertTriangle size={16} /> {t.notificationsSystemAlerts}</h3>
+                      {criticalResources.length ? <p className="mission-notification-alert-intro">{t.resourceAttentionDescription}</p> : null}
+                      {state.activeEvent ? (
+                        <article className="mission-notification-alert is-critical">
+                          <strong>{activeEventDefinition?.title[language] || (isArabic ? 'حدث طارئ نشط' : 'Active critical event')}</strong>
+                          {activeEventDefinition ? <p>{activeEventDefinition.description[language]}</p> : null}
+                        </article>
+                      ) : null}
+                      {criticalResources.map((resource) => (
+                        <article className="mission-notification-alert" key={resource}>
+                          <strong>{RESOURCE_META[resource].icon} {RESOURCE_META[resource].label[language]}</strong>
+                          <p>{formatResourceValue(resource, state.resources[resource], language)}</p>
+                        </article>
+                      ))}
+                      {offlineBuildings.map((id) => (
+                        <article className="mission-notification-alert is-critical" key={id}>
+                          <strong>{BUILDINGS[id].icon} {BUILDINGS[id].name[language]}</strong>
+                          <p>{t.notificationsSystemOffline}</p>
+                        </article>
+                      ))}
+                    </section>
+                  ) : (
+                    <p className="mission-notifications-clear">{t.notificationsNoCriticalAlerts}</p>
+                  )}
                 </div>
               ) : null}
-              {sidePanel === 'communications' ? <CrewCommLink state={state} /> : null}
-              {sidePanel === 'systems' ? (
+              {visibleSidePanel === 'resources' ? <ResourceBar resources={state.resources} language={language} energyCapacity={energyCapacity} crewSize={state.crewSize} /> : null}
+              {visibleSidePanel === 'crew' ? (
                 <div className="grid gap-3">
-                  {controlledSpecialty === 'medical' ? <CrewReadiness state={state} language={language} /> : <SurvivalSystems state={state} />}
-                  {controlledSpecialty !== 'medical' ? <TelemetryDashboard state={state} language={language} /> : null}
+                  {canViewCrewReadiness ? <CrewReadiness state={state} language={language} /> : null}
+                  <CrewCouncil state={state} onSelect={setControlledDuty} onReassign={handleCrewReassignment} />
                 </div>
               ) : null}
-              {sidePanel === 'operations' ? (
+              {visibleSidePanel === 'communications' ? <CrewCommLink state={state} /> : null}
+              {visibleSidePanel === 'systems' ? (
                 <div className="grid gap-3">
-                  {state.objective === 'tutorial' && state.controlMode === 'full' ? <TutorialGuide completed={state.tutorialSteps} language={language} /> : null}
+                  {canViewCrewReadiness || activeSpecialization === 'command' ? (
+                    <SurvivalSystems
+                      state={state}
+                      showEclss={canViewCrewReadiness}
+                      showEmergencyControls={activeSpecialization === 'command'}
+                    />
+                  ) : null}
+                  {canViewCrewReadiness ? <CrewReadiness state={state} language={language} /> : null}
+                  {canViewTelemetry ? <TelemetryDashboard state={state} language={language} /> : null}
+                </div>
+              ) : null}
+              {visibleSidePanel === 'operations' ? (
+                <div className="grid gap-3">
                   <ControlPanel state={state} disabled={Boolean(state.activeEvent) || needsTransitDecision} onAction={handleAction} />
                   {canManageFieldOperations ? <MissionOperations state={state} /> : null}
-                  {canManageGreenhouse ? <GreenhousePanel state={state} /> : null}
+                  {canManageGreenhouse ? <GreenhousePanel state={state} canTreatRegolith={canTreatRegolith} /> : null}
+                  {canViewSoilOperations ? <GreenhousePanel state={state} canTreatRegolith soilOnly /> : null}
                 </div>
               ) : null}
-              {sidePanel === 'infrastructure' ? <BuildingMenu state={state} /> : null}
-              {sidePanel === 'forecast' ? <ForecastTable state={state} language={language} onPreview={() => markTutorialStep('forecast')} /> : null}
+              {visibleSidePanel === 'infrastructure' ? <BuildingMenu state={state} /> : null}
+              {visibleSidePanel === 'forecast' ? <ForecastTable state={state} language={language} onPreview={() => markTutorialStep('forecast')} /> : null}
             </div>
           </aside>
-        ) : null}
-      </section>
+        </div>,
+        document.body,
+      ) : null}
 
       <details className={`mission-routine-dock${routineOpen ? ' is-open' : ''}`} open={routineOpen} onToggle={(event) => setRoutineOpen(event.currentTarget.open)}>
         <summary>
@@ -390,7 +534,7 @@ export function GameScreen({ state }: { state: GameState }) {
           <span className="mission-routine-chevron" aria-hidden="true">⌃</span>
         </summary>
         <div className="mission-routine-body">
-          <div className="mission-routine-progress"><span style={{ width: `${Math.max(0, Math.min(100, (state.hour - 6) / 16 * 100))}%` }} /></div>
+          <div className="mission-routine-progress"><span style={{ transform: `scaleX(${Math.max(0, Math.min(100, (state.hour - 6) / 16 * 100)) / 100})` }} /></div>
           <ol aria-label={t.dailyRoutineTitle}>
             {getCrewDailyRoutine(state.destination).map((item, index) => {
               const workShifts = getCompletedWorkShifts(state.todayActions)
@@ -410,12 +554,18 @@ export function GameScreen({ state }: { state: GameState }) {
             {state.lastMessage ? <p role="status">{state.lastMessage}</p> : null}
             <div>
               {state.hour < MISSION_BEDTIME ? <button type="button" onClick={waitUntilBedtime} disabled={!canWaitUntilBedtime(state)} className="secondary-button !px-4 !py-2 text-xs disabled:cursor-not-allowed disabled:opacity-40">{t.waitUntilBedtime}</button> : null}
-              <button type="button" onClick={handleSleep} disabled={sleeping || !canSleepAndAdvance(state)} className="primary-button !px-4 !py-2 text-xs disabled:cursor-not-allowed disabled:opacity-40">🌙 {t.sleepAndNextDay}</button>
+              <button type="button" onClick={handleSleep} disabled={sleeping || !canSleepAndAdvance(state)} className="primary-button !px-4 !py-2 text-xs disabled:cursor-not-allowed disabled:opacity-40"><Moon size={14} aria-hidden="true" /> {t.sleepAndNextDay}</button>
             </div>
           </div>
         </div>
       </details>
 
+      {state.lastMessage.startsWith('Access Denied:') ? (
+        <div role="alert" className="fixed bottom-20 start-1/2 z-[1200] -translate-x-1/2 rounded-xl border border-rose-300/40 bg-slate-950/95 px-4 py-3 text-sm font-bold text-rose-100 shadow-2xl">
+          <AlertTriangle size={15} className="me-2 inline-block" aria-hidden="true" />
+          {state.lastMessage}
+        </div>
+      ) : null}
       {notice ? <div role="status" className="fixed bottom-24 start-1/2 z-40 -translate-x-1/2 rounded-xl border border-emerald-200/15 bg-slate-900 px-4 py-3 text-sm text-emerald-100 shadow-2xl">{notice}</div> : null}
       {sleeping ? (
         <div className="sleep-sequence" role="status" aria-live="assertive" dir={isArabic ? 'rtl' : 'ltr'}>
@@ -461,4 +611,39 @@ export function GameScreen({ state }: { state: GameState }) {
       ) : null}
     </main>
   )
+}
+
+function OperationProgressRunner({ state }: { state: GameState }) {
+  const advanceOperation = useGameStore((store) => store.advanceOperation)
+  const operation = state.activeOperation
+  const waitingForBuildCycle = operation?.id === 'construction' && operation.step === 2 && operation.cyclesRemaining > 0
+  const waitingForSite = operation?.id === 'construction' && operation.step === 0 && operation.siteDistanceUnits < 100
+
+  useEffect(() => {
+    if (
+      !operation ||
+      operation.status !== 'active' ||
+      state.paused ||
+      state.isGameOver ||
+      state.activeEvent ||
+      waitingForBuildCycle ||
+      waitingForSite
+    ) return
+    const timer = window.setTimeout(advanceOperation, 6_000)
+    return () => window.clearTimeout(timer)
+  }, [
+    operation?.id,
+    operation?.step,
+    operation?.status,
+    operation?.cyclesRemaining,
+    operation?.siteDistanceUnits,
+    state.paused,
+    state.isGameOver,
+    state.activeEvent,
+    waitingForBuildCycle,
+    waitingForSite,
+    advanceOperation,
+  ])
+
+  return null
 }

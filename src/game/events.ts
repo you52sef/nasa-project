@@ -1,5 +1,6 @@
-import { convertLegacyResourceDelta, deterministicRoll, DIFFICULTY_MODIFIERS, type GameState } from './model'
+import { convertLegacyResourceDelta, deterministicRoll, DIFFICULTY_MODIFIERS, isCrewMemberAvailable, type GameState } from './model'
 import { SCENARIOS, type ScenarioId } from './scenarios'
+import { getCrewAssignmentById, getMissionSpecialization, type MissionSpecialization } from './crewRosters'
 
 export interface EventChoice {
   label: { ar: string; en: string }
@@ -37,11 +38,44 @@ function convertLegacyEventEffects(effects: EventChoice['effects']): EventChoice
   return converted
 }
 
-export function canChooseEventOption(state: GameState, choice: EventChoice): boolean {
-  return !choice.requiresBuilding || (
-    state.buildings.includes(choice.requiresBuilding) &&
-    !(state.offlineBuildings || []).includes(choice.requiresBuilding)
+const EVENT_SPECIALIZATIONS: Readonly<Record<string, MissionSpecialization>> = {
+  'water-leak': 'biology',
+  'solar-storm': 'command',
+  'low-light': 'engineering',
+  'crop-failure': 'biology',
+  'pressure-seal': 'engineering',
+  'panel-dust': 'engineering',
+  'comms-blackout': 'engineering',
+  'medical-alert': 'biology',
+  'water-contamination': 'biology',
+  'micrometeorite-impact': 'engineering',
+  'greenhouse-nutrient': 'biology',
+}
+
+export function getEventChoiceRequiredSpecialization(eventId: string): MissionSpecialization | undefined {
+  return EVENT_SPECIALIZATIONS[eventId]
+}
+
+export function canControlEventChoice(state: GameState, eventId: string): boolean {
+  const required = getEventChoiceRequiredSpecialization(eventId)
+  if (!required) return true
+  const dutyId = state.controlledDutyId
+  const assignment = dutyId
+    ? getCrewAssignmentById(state.destination, state.maxDays, state.crewSize, dutyId, state.crewSpecialtyOverrides)
+    : undefined
+  return Boolean(
+    assignment &&
+    getMissionSpecialization(assignment.specialty) === required &&
+    isCrewMemberAvailable(state, dutyId),
   )
+}
+
+export function canChooseEventOption(state: GameState, choice: EventChoice, eventId?: string): boolean {
+  if (choice.requiresBuilding && (
+    !state.buildings.includes(choice.requiresBuilding) ||
+    (state.offlineBuildings || []).includes(choice.requiresBuilding)
+  )) return false
+  return !eventId || canControlEventChoice(state, eventId)
 }
 
 const LEGACY_EVENTS: EventDefinition[] = [

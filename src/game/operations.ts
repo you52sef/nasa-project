@@ -1,5 +1,5 @@
 import type { Destination, GameState } from './model'
-import { getCrewRoster, type CrewAssignment } from './crewRosters'
+import { getAccessDeniedMessage, getCrewAssignmentById, getCrewRoster, getMissionSpecialization, type CrewAssignment, type MissionSpecialization } from './crewRosters'
 
 export type OperationId = 'science-expedition' | 'maintenance' | 'construction' | 'rescue'
 
@@ -104,44 +104,96 @@ export interface ActiveOperation {
   siteDistanceUnits: number
 }
 
+export type OperationBlocker = 'role' | 'phase' | 'destination' | 'crew' | 'specialist-unavailable' | 'facility' | 'busy' | 'cargo'
+
+export function getOperationReadiness(state: GameState, id: OperationId): { ready: boolean; blocker: OperationBlocker | null } {
+  const operation = getOperationDefinition(id)
+  const controllerId = state.controlledDutyId
+  const controller = controllerId
+    ? getCrewAssignmentById(state.destination, state.maxDays, state.crewSize, controllerId, state.crewSpecialtyOverrides)
+    : undefined
+  if (!controller || getMissionSpecialization(controller.specialty) !== getOperationSpecialization(id)) {
+    return { ready: false, blocker: 'role' }
+  }
+  if (!isOperationCrewMemberAvailable(state, controllerId)) return { ready: false, blocker: 'specialist-unavailable' }
+  if (state.isGameOver || state.missionPhase !== 'surface') return { ready: false, blocker: 'phase' }
+  if (!operation.destinations.includes(state.destination)) return { ready: false, blocker: 'destination' }
+  if (state.activeOperation?.status === 'active') return { ready: false, blocker: 'busy' }
+  if (state.crewSize < operation.crewMinimum) return { ready: false, blocker: 'crew' }
+  const roster = getCrewRoster(state.destination, state.maxDays, state.crewSize)
+  const members = roster?.assignments.flatMap((assignment) => {
+    const slug = assignment.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')
+    return Array.from({ length: assignment.count }, (_, index) => {
+      const id = `${slug}-${index + 1}`
+      return { id, specialty: state.crewSpecialtyOverrides?.[id] || assignment.specialty }
+    })
+  }) || []
+  const availableMembers = [...members]
+  const assignedMembers: typeof members = []
+  const roleMatches = operation.requiredCrewSpecialties.every((alternatives) => {
+    const assignedIndex = availableMembers.findIndex((member) => alternatives.includes(member.specialty))
+    if (assignedIndex < 0) return false
+    assignedMembers.push(availableMembers[assignedIndex])
+    availableMembers.splice(assignedIndex, 1)
+    return true
+  })
+  if (!roleMatches) return { ready: false, blocker: 'crew' }
+  if (assignedMembers.some((member) => !isOperationCrewMemberAvailable(state, member.id))) {
+    return { ready: false, blocker: 'specialist-unavailable' }
+  }
+  const requiredBuildings = [
+    ...operation.requiredBuildings,
+    ...(id === 'construction' ? ['life-support', 'solar-panels'] : []),
+  ]
+  if (requiredBuildings.some((building) =>
+    !state.buildings.includes(building) || (state.offlineBuildings || []).includes(building),
+  )) return { ready: false, blocker: 'facility' }
+  if (id === 'maintenance' && state.resources.cargo < 5) return { ready: false, blocker: 'cargo' }
+  return { ready: true, blocker: null }
+}
+
 export function getOperationDefinition(id: OperationId): MissionOperationDefinition {
   const definition = MISSION_OPERATIONS.find((operation) => operation.id === id)
   if (!definition) throw new Error(`Unknown mission operation: ${id}`)
   return definition
 }
 
+export function canControlOperation(state: GameState, id: OperationId): boolean {
+  const specialty = state.controlledDutyId
+    ? getCrewAssignmentById(state.destination, state.maxDays, state.crewSize, state.controlledDutyId, state.crewSpecialtyOverrides)?.specialty
+    : undefined
+  if (!specialty) return false
+  if (!isOperationCrewMemberAvailable(state, state.controlledDutyId)) return false
+  const requiredSpecialization: Record<OperationId, MissionSpecialization> = {
+    'science-expedition': 'geology',
+    maintenance: 'engineering',
+    construction: 'engineering',
+    rescue: 'command',
+  }
+  return getMissionSpecialization(specialty) === requiredSpecialization[id]
+}
+
+function getOperationSpecialization(id: OperationId): MissionSpecialization {
+  if (id === 'science-expedition') return 'geology'
+  if (id === 'maintenance' || id === 'construction') return 'engineering'
+  return 'command'
+}
+
+function isOperationCrewMemberAvailable(state: GameState, dutyId: string): boolean {
+  const condition = state.crewConditions?.[dutyId]
+  return (condition?.health ?? state.resources.health) > 20 &&
+    (condition?.fatigue ?? state.fatigue) < 90 &&
+    (condition?.stress ?? state.crewStress) < 90
+}
+
 export function canStartOperation(state: GameState, id: OperationId): boolean {
-  const operation = getOperationDefinition(id)
-  const roster = getCrewRoster(state.destination, state.maxDays, state.crewSize)
-  const availableSpecialties = roster?.assignments.flatMap((assignment) =>
-    Array.from({ length: assignment.count }, () => assignment.specialty),
-  ) || []
-  const roleMatches = operation.requiredCrewSpecialties.every((alternatives) => {
-    const assignedIndex = availableSpecialties.findIndex((specialty) => alternatives.includes(specialty))
-    if (assignedIndex < 0) return false
-    availableSpecialties.splice(assignedIndex, 1)
-    return true
-  })
-  return (!state.activeOperation || state.activeOperation.status !== 'active') &&
-    !state.isGameOver &&
-    state.missionPhase === 'surface' &&
-    operation.destinations.includes(state.destination) &&
-    state.crewSize >= operation.crewMinimum &&
-    roleMatches &&
-    operation.requiredBuildings.every((building) =>
-      state.buildings.includes(building) && !(state.offlineBuildings || []).includes(building),
-    ) &&
-    (id !== 'construction' || (
-      state.buildings.includes('life-support') &&
-      !(state.offlineBuildings || []).includes('life-support') &&
-      state.buildings.includes('solar-panels') &&
-      !(state.offlineBuildings || []).includes('solar-panels')
-    )) &&
-    (id !== 'maintenance' || state.resources.cargo >= 5) &&
-    (id !== 'rescue' || state.buildings.includes('storm-shelter'))
+  return getOperationReadiness(state, id).ready
 }
 
 export function startOperation(state: GameState, id: OperationId): GameState {
+  if (!canControlOperation(state, id)) {
+    return { ...state, lastMessage: getAccessDeniedMessage(getOperationSpecialization(id)) }
+  }
   if (!canStartOperation(state, id)) {
     return { ...state, lastMessage: 'Operation prerequisites are not met; check crew, destination, and required active facilities.' }
   }
@@ -161,6 +213,7 @@ export function startOperation(state: GameState, id: OperationId): GameState {
       ? { ...state.resources, cargo: state.resources.cargo - 5 }
       : state.resources,
     lastMessage: `${getOperationDefinition(id).title.en} operation started.`,
+    log: [...state.log, `Day ${state.day}: ${getOperationDefinition(id).title.en} launched; telemetry online.`],
   }
 }
 
@@ -168,6 +221,9 @@ export function setOperationSiteDistance(state: GameState, distance: number): Ga
   const operation = state.activeOperation
   if (!operation || operation.id !== 'construction' || operation.step !== 0 || !Number.isFinite(distance) || distance < 0) {
     return state
+  }
+  if (!canControlOperation(state, operation.id)) {
+    return { ...state, lastMessage: getAccessDeniedMessage(getOperationSpecialization(operation.id)) }
   }
   return {
     ...state,
@@ -181,6 +237,9 @@ export function setOperationSiteDistance(state: GameState, distance: number): Ga
 export function advanceOperation(state: GameState): GameState {
   const active = state.activeOperation
   if (!active || active.status !== 'active') return state
+  if (!canControlOperation(state, active.id)) {
+    return { ...state, lastMessage: getAccessDeniedMessage(getOperationSpecialization(active.id)) }
+  }
   const definition = getOperationDefinition(active.id)
   if (active.id === 'science-expedition') {
     if (state.destination === 'mars' && state.dustStormDaysRemaining > 0) {
@@ -222,7 +281,7 @@ export function advanceOperation(state: GameState): GameState {
     lastMessage: completed
       ? `${definition.title.en} operation complete.`
       : `${definition.steps[nextStep].en} — ${nextStep + 1}/${definition.steps.length}`,
-    log: [...state.log, `Day ${state.day}: ${definition.id} step ${completed ? definition.steps.length : nextStep + 1}`],
+    log: [...state.log, `Day ${state.day}: ${definition.id} telemetry · ${completed ? definition.steps.length : nextStep + 1}/${definition.steps.length} · ${completed ? 'operation complete' : definition.steps[nextStep].en}`],
   }
   if (completed && active.id === 'construction' && !next.buildings.includes('expansion')) {
     next.buildings = [...next.buildings, 'expansion']
@@ -236,6 +295,9 @@ export function advanceOperation(state: GameState): GameState {
 export function advanceOperationCycle(state: GameState): GameState {
   const operation = state.activeOperation
   if (!operation || operation.status !== 'active') return state
+  if (!canControlOperation(state, operation.id)) {
+    return { ...state, lastMessage: getAccessDeniedMessage(getOperationSpecialization(operation.id)) }
+  }
   if (operation.id === 'science-expedition') {
     const suitOxygenPercent = Math.max(0, operation.suitOxygenPercent - 30)
     const failed = suitOxygenPercent <= 0

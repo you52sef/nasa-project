@@ -2,10 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { UserRound, X } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import type { GameState } from '../game/model'
-import { getAstronautDutyProgress } from '../game/teamwork'
-import { localizeCrewRole } from '../game/crewRosters'
+import { getAstronautDutyProgress, getMissionCrewAssignments } from '../game/teamwork'
+import { getCrewCondition } from '../game/model'
+import { localizeCrewRole, localizeCrewSpecialty } from '../game/crewRosters'
 import { MISSION_PROFILES } from '../game/missionProfiles'
 import type { Language } from '../store/settingsStore'
+import { useGameStore } from '../store/gameStore'
 import ar from '../i18n/ar'
 import en from '../i18n/en'
 
@@ -21,6 +23,8 @@ export function AstronautProfileHud({
   const t = language === 'ar' ? ar : en
   const progress = getAstronautDutyProgress(state, language)
   const missionProfile = MISSION_PROFILES[state.missionType]
+  const setControlledDuty = useGameStore((store) => store.setControlledDuty)
+  const crewAssignments = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays, state.crewSpecialtyOverrides)
   const [open, setOpen] = useState(false)
   const [closing, setClosing] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -140,6 +144,34 @@ export function AstronautProfileHud({
 
             <div className="astronaut-profile-drawer-body">
               <section className="astronaut-profile-card">
+                <h3>{language === 'ar' ? 'اختيار فرد الطاقم النشط' : 'Select active astronaut'}</h3>
+                <ul className="mt-3 grid gap-2">
+                  {crewAssignments.map((duty) => {
+                    const condition = getCrewCondition(state, duty.id)
+                    const selected = duty.id === state.controlledDutyId
+                    return (
+                      <li key={duty.id}>
+                        <button
+                          type="button"
+                          className={`flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-2 text-start transition ${selected ? 'border-cyan-300/40 bg-cyan-300/[0.08]' : 'border-white/[0.08] bg-white/[0.025] hover:border-cyan-300/25'}`}
+                          aria-pressed={selected}
+                          onClick={() => setControlledDuty(duty.id)}
+                        >
+                          <span className="min-w-0">
+                            <span className="block truncate text-xs font-bold text-slate-100">{localizeCrewRole(duty.title, language)}</span>
+                            <span className="mt-1 block truncate text-[10px] text-slate-400">{localizeCrewSpecialty(duty.specialty, language)}</span>
+                          </span>
+                          <span className="shrink-0 text-[10px] font-bold text-cyan-100">
+                            {selected ? (language === 'ar' ? 'نشط' : 'ACTIVE') : `${Math.round(condition.health)}%`}
+                          </span>
+                        </button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </section>
+
+              <section className="astronaut-profile-card">
                 <h3>{t.astronautDuty}</h3>
                 <p>{localizeCrewRole(progress.duty.title, language)}</p>
                 <h3 className="mt-4">{t.missionTypeLabel}</h3>
@@ -160,7 +192,7 @@ export function AstronautProfileHud({
                   aria-valuemax={100}
                   aria-valuenow={percent}
                 >
-                  <span style={{ width: `${percent}%` }} />
+                  <span style={{ transform: `scaleX(${percent / 100})` }} />
                 </div>
                 <ul className="astronaut-profile-task-list">
                   {progress.tasks.map((task) => (

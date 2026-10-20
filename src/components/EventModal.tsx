@@ -1,5 +1,6 @@
 import { AlertTriangle } from 'lucide-react'
-import { canChooseEventOption, EVENTS } from '../game/events'
+import { canChooseEventOption, canControlEventChoice, EVENTS, getEventChoiceRequiredSpecialization } from '../game/events'
+import { getAccessDeniedMessage } from '../game/crewRosters'
 import ar from '../i18n/ar'
 import en from '../i18n/en'
 import { useGameStore } from '../store/gameStore'
@@ -113,33 +114,38 @@ export function EventModal() {
             ) : null}
           </div>
         </div>
-        <section className="mb-5 rounded-xl border border-cyan-200/10 bg-cyan-100/[0.025] p-3">
-          <h3 className="text-xs font-black text-cyan-50">{t.teamEventHeader}</h3>
-          <p className="mt-1 text-[10px] leading-5 text-slate-500">{t.teamEventNote}</p>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            {getAvailableCrewRoles(gameState.crewSize, gameState.destination, gameState.maxDays).map((role) => (
-              <article key={role.id} className="rounded-lg border border-white/[0.06] bg-slate-950/40 p-2">
-                <p className="text-[11px] font-bold text-slate-200">{role.icon} {t[role.title]}</p>
-                <p className="mt-1 text-[10px] leading-5 text-slate-500">{t[role.focus]}</p>
-                <p className="mt-1 text-[10px] leading-5 text-cyan-100/80">
-                  {t.teamEventVote}: {event.choices[teamRecommendation.votes[role.id]]?.label[language]}
-                </p>
-              </article>
-            ))}
-          </div>
-          <p className="mt-3 text-[11px] font-bold text-emerald-100">
-            {t.teamEventRecommendation}: {event.choices[teamRecommendation.recommendedIndex]?.label[language]}
-          </p>
-        </section>
+        {teamRecommendation.recommendedIndex === null ? null : (
+          <section className="mb-5 rounded-xl border border-cyan-200/10 bg-cyan-100/[0.025] p-3">
+            <h3 className="text-xs font-black text-cyan-50">{t.teamEventHeader}</h3>
+            <p className="mt-1 text-[10px] leading-5 text-slate-500">{t.teamEventNote}</p>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {getAvailableCrewRoles(gameState.crewSize, gameState.destination, gameState.maxDays).map((role) => (
+                <article key={role.id} className="rounded-lg border border-white/[0.06] bg-slate-950/40 p-2">
+                  <p className="text-[11px] font-bold text-slate-200">{role.icon} {t[role.title]}</p>
+                  <p className="mt-1 text-[10px] leading-5 text-slate-500">{t[role.focus]}</p>
+                  <p className="mt-1 text-[10px] leading-5 text-cyan-100/80">
+                    {t.teamEventVote}: {event.choices[teamRecommendation.votes[role.id]]?.label[language]}
+                  </p>
+                </article>
+              ))}
+            </div>
+            <p className="mt-3 text-[11px] font-bold text-emerald-100">
+              {t.teamEventRecommendation}: {event.choices[teamRecommendation.recommendedIndex]?.label[language]}
+            </p>
+          </section>
+        )}
         <p className="mb-3 text-xs font-bold text-slate-400">{t.choose}</p>
         <div className="grid gap-2">
           {event.choices.map((choice, index) => {
-            const requirementMissing = !canChooseEventOption(gameState, choice)
+            const requirementMissing = !canChooseEventOption(gameState, choice, event.id)
+            const requiredSpecialization = getEventChoiceRequiredSpecialization(event.id)
+            const accessDenied = Boolean(requiredSpecialization && !canControlEventChoice(gameState, event.id))
             const effectDescriptions = describeChoiceEffects(choice, gameState, language, t)
             return (
-            <button key={choice.label.en} type="button" onClick={() => handleChoice(index)} disabled={requirementMissing} title={requirementMissing ? t.stormShelterRequired : undefined} className={`rounded-xl border p-3 text-start text-sm font-semibold text-slate-200 transition hover:border-sky-200/25 hover:bg-sky-100/[0.06] disabled:cursor-not-allowed disabled:opacity-40 ${index === teamRecommendation.recommendedIndex ? 'border-emerald-200/35 bg-emerald-100/[0.035]' : 'border-white/[0.08] bg-white/[0.035]'}`}>
+            <button key={choice.label.en} type="button" onClick={() => handleChoice(index)} disabled={requirementMissing} title={requirementMissing ? accessDenied && requiredSpecialization ? getAccessDeniedMessage(requiredSpecialization, language) : t.stormShelterRequired : undefined} className={`rounded-xl border p-3 text-start text-sm font-semibold text-slate-200 transition hover:border-sky-200/25 hover:bg-sky-100/[0.06] disabled:cursor-not-allowed disabled:opacity-40 ${index === teamRecommendation.recommendedIndex ? 'border-emerald-200/35 bg-emerald-100/[0.035]' : 'border-white/[0.08] bg-white/[0.035]'}`}>
               <span className="me-2 text-sky-200">{index === 0 ? '01' : '02'}</span>{choice.label[language]}
               {index === teamRecommendation.recommendedIndex ? <span className="ms-2 text-[10px] text-emerald-100">· {t.teamEventRecommendation}</span> : null}
+              {accessDenied && requiredSpecialization ? <span className="mt-2 block text-[10px] font-bold text-rose-200">{getAccessDeniedMessage(requiredSpecialization, language)}</span> : null}
               <span className="mt-2 block text-[10px] font-medium leading-5 text-slate-400">
                 <span className="font-bold text-slate-300">{t.eventEffectsLabel}</span>{' '}
                 {effectDescriptions.length ? effectDescriptions.join(' · ') : t.noImmediateResourceChange}

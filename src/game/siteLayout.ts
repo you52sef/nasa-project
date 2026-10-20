@@ -7,7 +7,7 @@ export const BASE_MAP_SITES = {
   habitat: { x: 405, y: 280 },
   battery: { x: 650, y: 240 },
   industrialHub: { x: 220, y: 330 },
-  landingPad: { x: 55, y: 440 },
+  landingPad: { x: 65, y: 430 },
   protectedRidge: { x: 335, y: 155 },
   rover: { x: 720, y: 420 },
 } satisfies Record<string, MapPoint>
@@ -55,7 +55,7 @@ const INDUSTRIAL_FACILITIES = [
   'moxie',
 ]
 const GRID_SITES: MapPoint[] = [60, 155, 250, 345, 440].flatMap((y) =>
-  [55, 200, 345, 490, 635, 770].map((x) => ({ x, y })),
+  [65, 160, 255, 350, 445, 540, 635, 730].map((x) => ({ x, y })),
 )
 
 function isClearOf(point: MapPoint, reserved: readonly MapPoint[]): boolean {
@@ -68,10 +68,10 @@ const sites = new Map<string, MapPoint>([
   ['landing-pad', BASE_MAP_SITES.landingPad],
   ['battery', BASE_MAP_SITES.battery],
   ['storm-shelter', BASE_MAP_SITES.protectedRidge],
-  ['solar-panels', { x: 665, y: 90 }],
-  ['reactor', { x: 755, y: 175 }],
-  ['command-center', { x: 495, y: 280 }],
-  ['communications', { x: 500, y: 380 }],
+  ['solar-panels', { x: 650, y: 85 }],
+  ['reactor', { x: 745, y: 200 }],
+  ['command-center', { x: 475, y: 190 }],
+  ['communications', { x: 585, y: 190 }],
   ['greenhouse', { x: 405, y: 380 }],
   ['medical-bay', { x: 315, y: 280 }],
   ['isru', { x: 225, y: 380 }],

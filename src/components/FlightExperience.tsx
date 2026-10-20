@@ -11,6 +11,42 @@ type FlightPhase = 'preflight' | 'launch' | 'cruise' | 'landing'
 type FlightSpeed = 1 | 2 | 4
 type FlightMenu = 'speed' | 'performance' | null
 
+type FlightSessionState = {
+  phase: FlightPhase
+  profile: TransitChoice | null
+  speed: FlightSpeed
+  progress: number
+}
+
+function readFlightSessionState(key: string): FlightSessionState | null {
+  try {
+    const raw = sessionStorage.getItem(key)
+    if (!raw) return null
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') throw new Error('Invalid saved flight view state.')
+    const value = parsed as Partial<FlightSessionState>
+    if (
+      (value.phase !== 'preflight' && value.phase !== 'launch' && value.phase !== 'cruise' && value.phase !== 'landing') ||
+      (value.profile !== null && value.profile !== 'conservative' && value.profile !== 'efficient') ||
+      (value.speed !== 1 && value.speed !== 2 && value.speed !== 4) ||
+      typeof value.progress !== 'number' ||
+      !Number.isFinite(value.progress)
+    ) throw new Error('Invalid saved flight view state.')
+    return { phase: value.phase, profile: value.profile, speed: value.speed, progress: Math.max(0, Math.min(100, value.progress)) }
+  } catch (error) {
+    console.error('Could not restore Astra One flight view state.', error)
+    return null
+  }
+}
+
+function saveFlightSessionState(key: string, flightState: FlightSessionState): void {
+  try {
+    sessionStorage.setItem(key, JSON.stringify(flightState))
+  } catch (error) {
+    console.error('Could not save Astra One flight view state.', error)
+  }
+}
+
 export function FlightExperience({
   state,
   leg,
@@ -24,15 +60,17 @@ export function FlightExperience({
   const t = language === 'ar' ? ar : en
   const isArabic = language === 'ar'
   const canPilot = canControlFlight(state)
-  const [profile, setProfile] = useState<TransitChoice | null>(canPilot ? null : 'conservative')
-  const [speed, setSpeed] = useState<FlightSpeed>(1)
-  const [phase, setPhase] = useState<FlightPhase>('preflight')
-  const [progress, setProgress] = useState(0)
+  const flightSessionKey = `astra-one-flight-view-v1:${state.runId}:${leg}`
+  const [restoredFlight] = useState(() => readFlightSessionState(flightSessionKey))
+  const [profile, setProfile] = useState<TransitChoice | null>(restoredFlight?.profile ?? null)
+  const [speed, setSpeed] = useState<FlightSpeed>(restoredFlight?.speed ?? 1)
+  const [phase, setPhase] = useState<FlightPhase>(restoredFlight?.phase ?? 'preflight')
+  const [progress, setProgress] = useState(restoredFlight?.progress ?? 0)
   const [openMenu, setOpenMenu] = useState<FlightMenu>(null)
   const [countdownIndex, setCountdownIndex] = useState(0)
   const [transitNotice, setTransitNotice] = useState('')
-  const progressRef = useRef(0)
-  const transitDayRef = useRef(0)
+  const progressRef = useRef(progress)
+  const transitDayRef = useRef(Math.floor(SIMULATED_TRANSIT_DAYS[state.destination] * progress / 100))
   const noticeTimerRef = useRef<number | null>(null)
   const simulatedDurationDays = SIMULATED_TRANSIT_DAYS[state.destination]
   const elapsedDays = simulatedDurationDays * progress / 100
@@ -48,8 +86,11 @@ export function FlightExperience({
   const destination = leg === 'outbound' ? surfaceDestination : t.homePlanet
   const origin = leg === 'outbound' ? t.homePlanet : surfaceDestination
   const arrival = leg === 'outbound' ? surfaceDestination : t.homePlanet
+  const returnAscent = leg === 'return' && phase === 'launch'
+  const earthReentry = leg === 'return' && phase === 'landing'
+  const viewportWorld = returnAscent || leg === 'outbound' ? state.destination : 'earth'
   const title = phase === 'landing'
-    ? t.landingTitle
+    ? earthReentry ? t.earthReentryTitle : t.landingTitle
     : phase === 'launch'
       ? t.launchingTitle
       : leg === 'outbound' ? t.outboundDecisionTitle : t.returnDecisionTitle
@@ -69,8 +110,15 @@ export function FlightExperience({
         : '24s'
 
   useEffect(() => {
-    if (!canPilot && phase === 'preflight') setPhase('launch')
-  }, [canPilot, phase])
+    const saveLatestState = () => saveFlightSessionState(flightSessionKey, { phase, profile, speed, progress: progressRef.current })
+    saveLatestState()
+    window.addEventListener('pagehide', saveLatestState)
+    const interval = phase === 'cruise' ? window.setInterval(saveLatestState, 500) : null
+    return () => {
+      window.removeEventListener('pagehide', saveLatestState)
+      if (interval !== null) window.clearInterval(interval)
+    }
+  }, [flightSessionKey, phase, profile, speed])
 
   useEffect(() => {
     if (phase !== 'launch' && phase !== 'landing') return
@@ -99,16 +147,21 @@ export function FlightExperience({
     if (phase !== 'cruise') return
     const travelDuration = 30_000
     let lastTimestamp = 0
+    let lastUiUpdate = 0
     let elapsed = progressRef.current / 100 * travelDuration
     let frame = 0
     const updateProgress = (timestamp: number) => {
       if (lastTimestamp) elapsed += (timestamp - lastTimestamp) * speed
       lastTimestamp = timestamp
       progressRef.current = Math.min(100, elapsed / travelDuration * 100)
-      setProgress(progressRef.current)
       if (progressRef.current >= 100) {
+        setProgress(100)
         setPhase('landing')
         return
+      }
+      if (timestamp - lastUiUpdate >= 100) {
+        lastUiUpdate = timestamp
+        setProgress(progressRef.current)
       }
       frame = window.requestAnimationFrame(updateProgress)
     }
@@ -140,11 +193,11 @@ export function FlightExperience({
   }, [transitNotice])
 
   useEffect(() => {
-    if (phase !== 'landing' || !profile) return
+    if (!canPilot || phase !== 'landing' || !profile) return
     const duration = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 350 : 5_500
     const timer = window.setTimeout(() => onArrive(leg, profile), duration)
     return () => window.clearTimeout(timer)
-  }, [leg, onArrive, phase, profile])
+  }, [canPilot, leg, onArrive, phase, profile])
 
   const beginFlight = () => {
     if (!canPilot || !profile || phase !== 'preflight') return
@@ -160,20 +213,29 @@ export function FlightExperience({
   return (
     <main className="flight-page" dir={isArabic ? 'rtl' : 'ltr'}>
       <section
-        className={`flight-fullscreen-space spacecraft-viewport spacecraft-viewport-${leg === 'return' ? 'earth' : state.destination} spacecraft-phase-${phase}${phase === 'landing' && leg === 'outbound' ? ' spacecraft-surface-transition' : ''}`}
+        className={`flight-fullscreen-space spacecraft-viewport spacecraft-viewport-${viewportWorld} spacecraft-phase-${phase}${phase === 'landing' && leg === 'outbound' ? ' spacecraft-surface-transition' : ''}${returnAscent ? ' spacecraft-return-ascent' : ''}${earthReentry ? ' spacecraft-earth-reentry' : ''}`}
         aria-label={`${title} · ${destination}`}
       >
         <div className="spacecraft-viewport-stars" style={{ animationDuration: starDriftDuration }} />
-        <div className="spacecraft-viewport-planet" style={{ transform: `scale(${planetScale})` }} />
+        {!earthReentry ? <div className="spacecraft-viewport-planet" style={{ transform: `scale(${planetScale})` }} /> : null}
         <div className="spacecraft-viewport-horizon" />
         {phase === 'launch' || phase === 'landing' ? (
           <>
-            <div className={`flight-transition-vehicle flight-transition-${phase}`} aria-hidden="true">
+            <div className={`flight-transition-vehicle flight-transition-${phase}${returnAscent ? ' flight-transition-return-ascent' : ''}${earthReentry ? ' flight-transition-reentry' : ''}`} aria-hidden="true">
               <Rocket size={52} strokeWidth={1.6} />
               <span className={`flight-thruster flight-thruster-${state.destination}`} />
+              {earthReentry ? (
+                <span className="flight-reentry-parachute">
+                  <svg viewBox="0 0 100 56" role="presentation">
+                    <path d="M7 39C10 14 29 4 50 4s40 10 43 35c-12-7-20-7-29 0-9-7-19-7-28 0-10-7-18-7-29 0Z" />
+                    <path d="m7 39 39 12m8-12-4 12m43-12L54 51" />
+                  </svg>
+                </span>
+              ) : null}
             </div>
-            <div className={`flight-engine-plume flight-engine-plume-${phase} flight-engine-plume-${state.destination}`} aria-hidden="true" />
-            {phase === 'landing' && state.destination === 'mars' ? <div className="flight-atmosphere-glow" aria-hidden="true" /> : null}
+            <div className={`flight-engine-plume flight-engine-plume-${phase} flight-engine-plume-${state.destination}${returnAscent ? ' flight-engine-plume-return-ascent' : ''}${earthReentry ? ' flight-engine-plume-reentry' : ''}`} aria-hidden="true" />
+            {phase === 'landing' && (state.destination === 'mars' || earthReentry) ? <div className={`flight-atmosphere-glow${earthReentry ? ' flight-atmosphere-glow-earth' : ''}`} aria-hidden="true" /> : null}
+            {earthReentry ? <div className="flight-reentry-plasma" aria-hidden="true"><i /><i /><i /><i /><i /></div> : null}
             {phase === 'launch' ? <div className="flight-liftoff-shake" aria-hidden="true" /> : null}
           </>
         ) : null}
@@ -185,6 +247,11 @@ export function FlightExperience({
         </div>
 
         <AstronautProfileHud state={state} language={language} flight />
+        {!canPilot ? (
+          <p role="alert" className="fixed start-1/2 top-24 z-[1200] -translate-x-1/2 rounded-xl border border-rose-300/40 bg-slate-950/95 px-4 py-3 text-sm font-bold text-rose-100 shadow-2xl">
+            {isArabic ? 'Access Denied: Action requires قائد المهمة/طيار' : 'Access Denied: Action requires Commander/Pilot'}
+          </p>
+        ) : null}
 
         <section className="flight-day-counter" aria-label={t.flightDayLabel}>
           <span className="flight-hud-label">{isArabic ? 'أيام العبور' : 'TRANSIT DAYS'}</span>
@@ -280,8 +347,12 @@ export function FlightExperience({
                 ? `${isArabic ? 'الإقلاع خلال' : 'LIFTOFF IN'} ${5 - countdownIndex}`
                 : (isArabic ? 'انطلاق!' : 'LIFTOFF!')
               : countdownIndex < 5
-                ? `${t.landingCountdown} ${5 - countdownIndex}`
-                : t.landingTitle}
+                ? earthReentry
+                  ? `${t.earthReentryCountdown} ${5 - countdownIndex}`
+                  : `${t.landingCountdown} ${5 - countdownIndex}`
+                : earthReentry
+                  ? t.earthLandingTitle
+                  : t.landingTitle}
           </p>
         ) : null}
 
@@ -303,7 +374,7 @@ export function FlightExperience({
             aria-valuemax={100}
             aria-valuenow={phase === 'landing' ? 100 : Math.round(progress)}
           >
-            <span style={{ width: `${phase === 'landing' ? 100 : progress}%` }} />
+            <span style={{ transform: `scaleX(${(phase === 'landing' ? 100 : progress) / 100})` }} />
           </div>
         </div>
       </section>

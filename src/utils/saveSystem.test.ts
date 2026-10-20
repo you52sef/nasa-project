@@ -67,6 +67,8 @@ test('persists pause state, schedule, specialist mode, and an unresolved emergen
     hour: 18,
     todayActions: ['research'],
     crewSupportActionHistory: ['maintenance'],
+    crewConditions: { 'systems-engineer-1': { health: 72, fatigue: 51, stress: 48, morale: 64 } },
+    crewSpecialtyOverrides: { 'systems-engineer-1': 'power' },
   }
 
   saveGame(pausedMission)
@@ -97,4 +99,82 @@ test('persists a 180-day mission with a 12-person crew', () => {
   }
   saveMissionSetup(setup)
   assert.deepEqual(loadMissionSetup(), setup)
+})
+
+test('rejects saved games with null or non-finite resource telemetry', () => {
+  memoryStorage.clear()
+  const mission = initialGameState('moon', 2, 'Invalid telemetry', 23)
+  const saved = { state: mission, savedAt: new Date().toISOString() }
+
+  memoryStorage.set('little-orbit-save-v1', JSON.stringify({
+    ...saved,
+    state: { ...mission, resources: { ...mission.resources, oxygen: null } },
+  }))
+  assert.throws(() => loadGame(), /ملف الحفظ غير صالح/)
+
+  memoryStorage.set('little-orbit-save-v1', JSON.stringify({
+    ...saved,
+    state: { ...mission, resources: { ...mission.resources, energy: 'high' } },
+  }))
+  assert.throws(() => loadGame(), /ملف الحفظ غير صالح/)
+})
+
+test('rejects saved games with an invalid mission type instead of restoring broken telemetry', () => {
+  memoryStorage.clear()
+  const mission = initialGameState('moon', 2, 'Invalid mission type', 23)
+  memoryStorage.set('little-orbit-save-v1', JSON.stringify({
+    state: { ...mission, missionType: 'mars-conjunction' },
+    savedAt: new Date().toISOString(),
+  }))
+
+  assert.throws(() => loadGame(), /ملف الحفظ غير صالح/)
+})
+
+test('rejects corrupted schedules, histories, events, and operation steps before hydration', () => {
+  memoryStorage.clear()
+  const mission = initialGameState('moon', 4, 'Corrupted mission state', 23)
+  const corruptions: Record<string, unknown>[] = [
+    { todayActions: 'research' },
+    { eventHistory: {} },
+    { activeEvent: { id: 'water-leak', choiceIndex: -1 } },
+    { activeEvent: { id: 'unregistered-event' } },
+    { failureCause: { resource: 'fuel', source: 'event' } },
+    {
+      activeOperation: {
+        id: 'science-expedition',
+        step: -1,
+        status: 'active',
+        cyclesRemaining: 0,
+        partialDamage: false,
+        suitOxygenPercent: 100,
+        siteDistanceUnits: 0,
+      },
+    },
+  ]
+
+  for (const corruption of corruptions) {
+    memoryStorage.set('little-orbit-save-v1', JSON.stringify({
+      state: { ...mission, ...corruption },
+      savedAt: new Date().toISOString(),
+    }))
+    assert.throws(() => loadGame(), /ملف الحفظ غير صالح/)
+  }
+})
+
+test('accepts a valid in-progress mission operation during save hydration', () => {
+  memoryStorage.clear()
+  const mission: GameState = {
+    ...initialGameState('moon', 4, 'Active operation save', 23),
+    activeOperation: {
+      id: 'science-expedition',
+      step: 2,
+      status: 'active',
+      cyclesRemaining: 0,
+      partialDamage: false,
+      suitOxygenPercent: 70,
+      siteDistanceUnits: 0,
+    },
+  }
+  saveGame(mission)
+  assert.deepEqual(loadGame()?.state, mission)
 })

@@ -66,6 +66,19 @@ test('facility markers, habitat, and rover do not overlap', () => {
   }
 })
 
+test('keeps every facility marker and the rover inside the map frame', () => {
+  const points = [
+    ...Object.entries(FACILITY_MAP_SITES),
+    ['habitat', BASE_MAP_SITES.habitat] as const,
+    ['rover', BASE_MAP_SITES.rover] as const,
+  ]
+  const markerExtent = 45
+  for (const [id, point] of points) {
+    assert.ok(point.x >= markerExtent && point.x <= 800 - markerExtent, `${id} exceeds horizontal map bounds`)
+    assert.ok(point.y >= markerExtent && point.y <= 500 - markerExtent, `${id} exceeds vertical map bounds`)
+  }
+})
+
 test('unknown facilities fail explicitly instead of receiving a potentially overlapping fallback', () => {
   assert.throws(() => getFacilityMapPosition('unknown-building'), /Unknown facility map site/)
 })

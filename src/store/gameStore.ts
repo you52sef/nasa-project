@@ -1,6 +1,7 @@
 import { create } from 'zustand'
-import { acknowledgeEveningDebrief as markEveningDebriefAcknowledged, canControlFlight, canSleepAndAdvance, createMissionRunId, MISSION_TYPE_MAX_DAYS, migrateLegacyResourceUnits, pretreatRegolith, recordTutorialStep as applyTutorialStep, resetResourceStreakIfNeeded, resolveAutomaticTransitDecision, resolveTransitDecision, scheduleActivity, setEmergencyLevel as applyEmergencyLevel, sleepAndAdvanceDay as applySleepAndAdvance, snapshotDailyResources, waitUntilBedtime as advanceToBedtime, type Action, type ConstructionProject, type ControlMode, type CrewRole, type Destination, type EmergencyLevel, type GameState, type MissionDifficulty, type MissionMode, type MissionObjective, type MissionType, type TransitChoice, type TutorialStep } from '../game/model'
+import { acknowledgeEveningDebrief as markEveningDebriefAcknowledged, canControlFlight, canSleepAndAdvance, createInitialCrewConditions, createMissionRunId, formallyReassignCrewSpecialty as applyCrewSpecialtyReassignment, getSupplyCapacity, isObjectiveComplete, MISSION_TYPE_MAX_DAYS, migrateLegacyResourceUnits, pretreatRegolith, recordTutorialStep as applyTutorialStep, resetResourceStreakIfNeeded, resolveTransitDecision, scheduleActivity, setEmergencyLevel as applyEmergencyLevel, sleepAndAdvanceDay as applySleepAndAdvance, snapshotDailyResources, waitUntilBedtime as advanceToBedtime, type Action, type ConstructionProject, type ControlMode, type CrewRole, type Destination, type EmergencyLevel, type GameState, type MissionDifficulty, type MissionMode, type MissionObjective, type MissionType, type TransitChoice, type TutorialStep } from '../game/model'
 import type { ScenarioId } from '../game/scenarios'
+import { BUILDINGS } from '../game/buildings'
 import {
   buildInState,
   convertLegacyResourceDelta,
@@ -10,13 +11,15 @@ import {
   settleAfterEvent,
   toggleBuildingInState,
 } from '../game/model'
-import { canChooseEventOption, chooseEvent, EVENTS } from '../game/events'
-import { getAvailableCrewRoles, getMissionCrewAssignments, respondToCrewRequest } from '../game/teamwork'
+import { canChooseEventOption, canControlEventChoice, chooseEvent, EVENTS, getEventChoiceRequiredSpecialization } from '../game/events'
+import { getAvailableCrewRoles, getCommandRoleForSpecialty, getMissionCrewAssignments, respondToCrewRequest } from '../game/teamwork'
+import { getAccessDeniedMessage, type CrewSpecialty } from '../game/crewRosters'
 import { deleteSave as eraseSave, hasSavedGame, loadGame as readGame, loadMissionSetup, saveGame as writeGame, saveMissionSetup } from '../utils/saveSystem'
 import { useAchievementsStore } from './achievementsStore'
 import { getAllowedCrewSizes } from '../game/crewRosters'
 import { MISSION_PROFILES } from '../game/missionProfiles'
 import { advanceOperation, setOperationSiteDistance, startOperation, type OperationId } from '../game/operations'
+import { ENVIRONMENT } from '../game/constants'
 
 type MissionState = GameState & {
   savedGameExists: boolean
@@ -29,6 +32,7 @@ type MissionState = GameState & {
   setControlMode: (mode: ControlMode) => void
   setControlledRole: (role: CrewRole) => void
   setControlledDuty: (dutyId: string) => void
+  reassignCrewSpecialty: (dutyId: string, specialty: CrewSpecialty) => void
   setAstronautName: (name: string) => void
   setAstronautDuty: (dutyId: string) => void
   setCrewSize: (size: number) => void
@@ -140,8 +144,8 @@ function persistSetup(state: GameState): void {
   })
 }
 
-function resolveCrewDuty(crewSize: number, destination: Destination, maxDays: number, dutyId: string, role: CrewRole) {
-  const duties = getMissionCrewAssignments(crewSize, destination, maxDays)
+function resolveCrewDuty(crewSize: number, destination: Destination, maxDays: number, dutyId: string, role: CrewRole, specialtyOverrides: Readonly<Record<string, CrewSpecialty>> = {}) {
+  const duties = getMissionCrewAssignments(crewSize, destination, maxDays, specialtyOverrides)
   const selected = duties.find((duty) => duty.id === dutyId) ||
     duties.find((duty) => duty.controlRole === role) ||
     duties[0]
@@ -156,7 +160,7 @@ function applyEventConsequences(state: GameState, eventId: string): GameState {
     const shelterOnline = state.buildings.includes('storm-shelter') && !(state.offlineBuildings || []).includes('storm-shelter')
     next.resources.health = Math.max(0, next.resources.health - (shelterOnline ? 2 : 14))
     next.radiationExposure = state.radiationExposure + (shelterOnline ? 8 : 24)
-    if (next.radiationExposure >= 600) next.permanentRadiationDamageWarning = true
+    if (next.radiationExposure >= ENVIRONMENT.gameRadiationWarningThresholdMsv) next.permanentRadiationDamageWarning = true
     if (shelterOnline) next.lastMessage = 'حماكم ملجأ العواصف من معظم الإشعاع.'
   }
   if (eventId === 'low-light') next.resources.energy = Math.max(0, next.resources.energy - 8)
@@ -170,7 +174,9 @@ function normalizeConstructionProject(value: unknown): ConstructionProject | nul
   if (value === null || value === undefined) return null
   if (typeof value !== 'object') throw new Error('Invalid construction project in saved mission.')
   const project = value as Record<string, unknown>
-  if (typeof project.buildingId !== 'string') throw new Error('Invalid construction project in saved mission.')
+  if (typeof project.buildingId !== 'string' || !Object.prototype.hasOwnProperty.call(BUILDINGS, project.buildingId)) {
+    throw new Error('Invalid construction project in saved mission.')
+  }
   const legacyTotal = typeof project.totalDays === 'number' ? project.totalDays * 24 : null
   const legacyRemaining = typeof project.daysRemaining === 'number' ? project.daysRemaining * 24 : null
   const totalHours = typeof project.totalHours === 'number' ? project.totalHours : legacyTotal
@@ -182,7 +188,14 @@ function normalizeConstructionProject(value: unknown): ConstructionProject | nul
   ) {
     throw new Error('Invalid construction timer in saved mission.')
   }
+
   return { buildingId: project.buildingId, totalHours, hoursRemaining }
+}
+
+function boundedTelemetry(value: unknown, fallback: number, minimum: number, maximum: number): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(minimum, Math.min(maximum, value))
+    : fallback
 }
 
 export const useGameStore = create<MissionState>((set, get) => ({
@@ -226,7 +239,7 @@ export const useGameStore = create<MissionState>((set, get) => ({
   },
   setControlledRole: (controlledRole) => {
     const state = get()
-    const duty = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays)
+    const duty = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays, state.crewSpecialtyOverrides)
       .find((option) => option.controlRole === controlledRole)
     if (!duty) return
     set({ controlledRole: duty.controlRole, controlledDutyId: duty.id, astronautDutyId: duty.id })
@@ -234,18 +247,34 @@ export const useGameStore = create<MissionState>((set, get) => ({
   },
   setControlledDuty: (dutyId) => {
     const state = get()
-    const duty = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays)
+    const duty = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays, state.crewSpecialtyOverrides)
       .find((option) => option.id === dutyId)
     if (!duty) return
     set({ controlledRole: duty.controlRole, controlledDutyId: duty.id, astronautDutyId: duty.id })
+    if (state.started) get().save()
     persistSetup(get())
+  },
+  reassignCrewSpecialty: (dutyId, specialty) => {
+    const state = get()
+    const next = applyCrewSpecialtyReassignment(state, dutyId, specialty)
+    if (next === state) return
+    const activeDuty = getMissionCrewAssignments(
+      next.crewSize,
+      next.destination,
+      next.maxDays,
+      next.crewSpecialtyOverrides,
+    ).find((option) => option.id === next.controlledDutyId)
+    if (!activeDuty) throw new Error(`Active crew member "${next.controlledDutyId}" is not in the mission roster after reassignment.`)
+    set({ ...next, controlledRole: getCommandRoleForSpecialty(activeDuty.specialty) })
+    get().save()
   },
   setAstronautName: (astronautName) => {
     set({ astronautName: astronautName.slice(0, 40) })
     persistSetup(get())
   },
   setAstronautDuty: (astronautDutyId) => {
-    const duties = getMissionCrewAssignments(get().crewSize, get().destination, get().maxDays)
+    const current = get()
+    const duties = getMissionCrewAssignments(current.crewSize, current.destination, current.maxDays, current.crewSpecialtyOverrides)
     if (!duties.some((duty) => duty.id === astronautDutyId)) return
     set({ astronautDutyId })
     persistSetup(get())
@@ -340,6 +369,7 @@ export const useGameStore = create<MissionState>((set, get) => ({
     get().save()
   },
   setMissionSeed: (missionSeed) => {
+    if (!Number.isFinite(missionSeed)) throw new Error('Mission seed must be a finite number.')
     set({ missionSeed: Math.max(0, Math.min(0xffff_ffff, Math.floor(missionSeed))) })
     persistSetup(get())
   },
@@ -396,14 +426,15 @@ export const useGameStore = create<MissionState>((set, get) => ({
   endMission: () => {
     const state = get()
     if (!state.started || state.isGameOver || state.activeEvent) return
-    eraseSave()
     const endedState: GameState = {
       ...state,
       isGameOver: true,
-      missionResult: 'ended',
+      missionResult: isObjectiveComplete(state) ? 'success' : 'failure',
       lastMessage: '',
     }
     set({ ...endedState, savedGameExists: false })
+    writeGame(endedState)
+    set({ savedGameExists: true })
     useAchievementsStore.getState().checkAchievements(endedState)
   },
 
@@ -462,9 +493,11 @@ export const useGameStore = create<MissionState>((set, get) => ({
 
   chooseTransit: (leg, choice) => {
     const state = get()
-    const next = canControlFlight(state)
-      ? resolveTransitDecision(state, leg, choice)
-      : resolveAutomaticTransitDecision(state, leg)
+    if (!canControlFlight(state)) {
+      set({ lastMessage: 'Access Denied: Action requires Commander/Pilot' })
+      return
+    }
+    const next = resolveTransitDecision(state, leg, choice)
     set(next)
     get().save()
     if (next.isGameOver) useAchievementsStore.getState().checkAchievements(next)
@@ -477,12 +510,20 @@ export const useGameStore = create<MissionState>((set, get) => ({
     const definition = EVENTS.find((event) => event.id === active.id)
     const choice = definition?.choices[choiceIndex]
     if (!choice) return
-    if (!canChooseEventOption(state, choice)) return
+    if (!canChooseEventOption(state, choice, active.id)) {
+      const requiredSpecialization = getEventChoiceRequiredSpecialization(active.id)
+      if (requiredSpecialization && !canControlEventChoice(state, active.id)) {
+        set({ lastMessage: getAccessDeniedMessage(requiredSpecialization) })
+      }
+      return
+    }
     const resources = { ...state.resources }
     for (const [key, delta] of Object.entries(choice.effects)) {
       const resource = key as keyof typeof resources
       const cap = resource === 'energy'
         ? getEnergyCapacity(state)
+        : resource === 'oxygen' || resource === 'water' || resource === 'food'
+          ? getSupplyCapacity(resource, state.crewSize)
         : resource === 'credits' || resource === 'cargo'
           ? Number.MAX_SAFE_INTEGER
           : 100
@@ -561,6 +602,9 @@ export const useGameStore = create<MissionState>((set, get) => ({
     const crewSize = savedState.crewSize || startingState.crewSize
     const missionDestination = savedState.destination || startingState.destination
     const missionDays = savedState.maxDays || startingState.maxDays
+    const maxDays = isLegacySave
+      ? Math.max(missionDays, 30)
+      : missionDays
     const missionType: MissionType = savedState.missionType ||
       (missionDestination === 'moon'
         ? missionDays > 30 ? 'moon-settlement' : 'moon-exploration'
@@ -569,12 +613,23 @@ export const useGameStore = create<MissionState>((set, get) => ({
     const savedControlledRole = availableRoles.some((role) => role.id === savedState.controlledRole)
       ? savedState.controlledRole!
       : availableRoles[0].id
+    const validDutyIds = new Set(getMissionCrewAssignments(crewSize, missionDestination, missionDays).map((duty) => duty.id))
+    const crewSpecialtyOverrides = Object.fromEntries(
+      Object.entries(savedState.crewSpecialtyOverrides || {}).filter(([dutyId, specialty]) =>
+        validDutyIds.has(dutyId) && [
+          'command', 'pilot', 'science', 'medical', 'engineering', 'communications', 'power',
+          'resources', 'robotics', 'agriculture', 'agriculture-resources', 'science-medical',
+          'engineering-science', 'geology-agriculture',
+        ].includes(specialty),
+      ),
+    ) as Record<string, CrewSpecialty>
     const controlledDuty = resolveCrewDuty(
       crewSize,
       missionDestination,
       missionDays,
       savedState.controlledDutyId || '',
       savedControlledRole,
+      crewSpecialtyOverrides,
     )
     const astronautDuty = resolveCrewDuty(
       crewSize,
@@ -582,16 +637,54 @@ export const useGameStore = create<MissionState>((set, get) => ({
       missionDays,
       savedState.astronautDutyId || controlledDuty.id,
       savedControlledRole,
+      crewSpecialtyOverrides,
     )
+    const defaultCrewConditions = createInitialCrewConditions(
+      missionDestination,
+      missionDays,
+      crewSize,
+      boundedTelemetry(savedState.resources.health, 100, 0, 100),
+    )
+    const crewConditions = Object.fromEntries(Object.entries(defaultCrewConditions).map(([dutyId, fallback]) => {
+      const savedCondition = savedState.crewConditions?.[dutyId]
+      return [dutyId, {
+        health: boundedTelemetry(savedCondition?.health, fallback.health, 0, 100),
+        fatigue: boundedTelemetry(savedCondition?.fatigue, fallback.fatigue, 0, 100),
+        stress: boundedTelemetry(savedCondition?.stress, fallback.stress, 0, 100),
+        morale: boundedTelemetry(
+          savedCondition?.morale,
+          boundedTelemetry(savedState.morale, fallback.morale, 0, 100),
+          0,
+          100,
+        ),
+      }]
+    }))
+    const loadedResources = savedVersion < 4
+      ? migrateLegacyResourceUnits(savedState.resources)
+      : savedState.resources
+    const energyCapacity = getEnergyCapacity({
+      buildings: savedState.buildings,
+      offlineBuildings: savedState.offlineBuildings || [],
+    })
+    const boundedResources = {
+      ...loadedResources,
+      energy: Math.max(0, Math.min(energyCapacity, loadedResources.energy)),
+      oxygen: Math.max(0, Math.min(getSupplyCapacity('oxygen', crewSize), loadedResources.oxygen)),
+      water: Math.max(0, Math.min(getSupplyCapacity('water', crewSize), loadedResources.water)),
+      food: Math.max(0, Math.min(getSupplyCapacity('food', crewSize), loadedResources.food)),
+      health: Math.max(0, Math.min(100, loadedResources.health)),
+      credits: Math.max(0, loadedResources.credits),
+      cargo: Math.max(0, loadedResources.cargo),
+    }
     set({
       ...startingState,
       ...savedGameState,
-      resources: savedVersion < 4
-        ? migrateLegacyResourceUnits(savedState.resources)
-        : savedState.resources,
-      configVersion: 9,
+      resources: boundedResources,
+      configVersion: 14,
       paused: false,
-      maxDays: isLegacySave ? Math.max(savedState.maxDays || startingState.maxDays, 30) : savedState.maxDays || startingState.maxDays,
+      maxDays,
+      day: Math.floor(boundedTelemetry(savedState.day, 1, 1, maxDays)),
+      daysSurvived: Math.floor(boundedTelemetry(savedState.daysSurvived, 0, 0, maxDays)),
       missionType,
       difficulty: savedState.difficulty || 'normal',
       objective: savedState.missionMode === 'education'
@@ -605,6 +698,8 @@ export const useGameStore = create<MissionState>((set, get) => ({
       crewSize,
       controlledRole: controlledDuty.controlRole,
       controlledDutyId: controlledDuty.id,
+      crewConditions,
+      crewSpecialtyOverrides,
       astronautName: savedState.astronautName || '',
       astronautDutyId: astronautDuty.id,
       missionPhase: savedState.missionPhase || (savedState.daysSurvived
@@ -613,15 +708,38 @@ export const useGameStore = create<MissionState>((set, get) => ({
       transitDecisions: savedState.transitDecisions || (savedState.daysSurvived
         ? [{ leg: 'outbound' as const, choice: 'conservative' as const }]
         : []),
-      hour: savedState.hour ?? 6,
+      hour: boundedTelemetry(savedState.hour, 6, 6, 22),
       todayActions: savedState.todayActions || [],
-      resourceStreak: savedState.resourceStreak || 0,
+      resourceStreak: Math.floor(boundedTelemetry(savedState.resourceStreak, 0, 0, Number.MAX_SAFE_INTEGER)),
       tutorialSteps: savedState.tutorialSteps || [],
-      successfulExpeditions: savedState.successfulExpeditions || 0,
       runId: savedState.runId || createMissionRunId(),
-      fatigue: savedState.fatigue ?? startingState.fatigue,
-      morale: savedState.morale ?? startingState.morale,
-      radiationExposure: savedState.radiationExposure ?? 0,
+      fatigue: boundedTelemetry(savedState.fatigue, startingState.fatigue, 0, 100),
+      morale: boundedTelemetry(savedState.morale, startingState.morale, 0, 100),
+      radiationExposure: boundedTelemetry(savedState.radiationExposure, 0, 0, Number.MAX_SAFE_INTEGER),
+      cabinPressureKpa: boundedTelemetry(
+        savedState.cabinPressureKpa,
+        savedState.ongoingLeak ? 75 : startingState.cabinPressureKpa,
+        0,
+        101.3,
+      ),
+      cabinOxygenPartialPressureKpa: boundedTelemetry(
+        savedState.cabinOxygenPartialPressureKpa,
+        savedState.ongoingLeak ? 15.7 : startingState.cabinOxygenPartialPressureKpa,
+        0,
+        30,
+      ),
+      cabinCo2PartialPressureKpa: boundedTelemetry(savedState.cabinCo2PartialPressureKpa, startingState.cabinCo2PartialPressureKpa, 0, 10),
+      cabinTemperatureC: boundedTelemetry(savedState.cabinTemperatureC, startingState.cabinTemperatureC, -100, 60),
+      scrubberHealth: boundedTelemetry(savedState.scrubberHealth, startingState.scrubberHealth, 0, 100),
+      crewStress: boundedTelemetry(savedState.crewStress, startingState.crewStress, 0, 100),
+      crewPulseBpm: boundedTelemetry(savedState.crewPulseBpm, startingState.crewPulseBpm, 40, 200),
+      airlockIsolated: savedState.airlockIsolated ?? false,
+      environmentalRadiationTodayMsv: boundedTelemetry(
+        savedState.environmentalRadiationTodayMsv,
+        0,
+        0,
+        100,
+      ),
       permanentRadiationDamageWarning: savedState.permanentRadiationDamageWarning ??
         (savedState.radiationExposure ?? 0) >= 600,
       activeOperation: savedState.activeOperation ?? null,
@@ -630,14 +748,18 @@ export const useGameStore = create<MissionState>((set, get) => ({
       dailyReports: savedState.dailyReports ?? [],
       constructionEventsToday: savedState.constructionEventsToday ?? [],
       regolithPreTreated: savedState.regolithPreTreated ?? false,
-      oxygenEmergencyHoursRemaining: savedState.oxygenEmergencyHoursRemaining ?? null,
+      oxygenEmergencyHoursRemaining: savedState.oxygenEmergencyHoursRemaining === null
+        ? null
+        : boundedTelemetry(savedState.oxygenEmergencyHoursRemaining, 6, 0, 6),
       survivalMode: savedState.survivalMode ?? false,
       survivalModeOfflineBuildings: savedState.survivalModeOfflineBuildings ?? [],
       autoShedBuildings: savedState.autoShedBuildings ?? [],
-      emergencyLevel: savedState.emergencyLevel ?? 0,
-      dustStormDaysRemaining: savedState.dustStormDaysRemaining ?? 0,
-      dustStormSolarLossFraction: savedState.dustStormSolarLossFraction ?? 0,
-      missionSeed: savedState.missionSeed ?? Math.floor(Math.random() * 0x1_0000_0000),
+      emergencyLevel: Math.floor(boundedTelemetry(savedState.emergencyLevel, 0, 0, 4)) as EmergencyLevel,
+      dustStormDaysRemaining: Math.floor(boundedTelemetry(savedState.dustStormDaysRemaining, 0, 0, 5)),
+      dustStormSolarLossFraction: boundedTelemetry(savedState.dustStormSolarLossFraction, 0, 0, 1),
+      missionSeed: savedState.missionSeed === undefined
+        ? Math.floor(Math.random() * 0x1_0000_0000)
+        : Math.floor(boundedTelemetry(savedState.missionSeed, 0, 0, 0xffff_ffff)),
       offlineBuildings: savedState.offlineBuildings ?? [],
       started: true,
       activeEvent: savedState.activeEvent ?? null,
@@ -646,6 +768,9 @@ export const useGameStore = create<MissionState>((set, get) => ({
       crewCommunications: savedState.crewCommunications ?? [],
       eventHistory: savedState.eventHistory ?? [],
       failureCause: savedState.failureCause ?? null,
+      science: boundedTelemetry(savedState.science, 0, 0, Number.MAX_SAFE_INTEGER),
+      successfulExpeditions: Math.floor(boundedTelemetry(savedState.successfulExpeditions, 0, 0, Number.MAX_SAFE_INTEGER)),
+      totalRescues: Math.floor(boundedTelemetry(savedState.totalRescues, 0, 0, Number.MAX_SAFE_INTEGER)),
       savedGameExists: true,
     })
     useAchievementsStore.getState().checkAchievements(get())

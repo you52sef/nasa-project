@@ -2,6 +2,7 @@ import { Download, RotateCcw, Telescope } from 'lucide-react'
 import { Volume2, VolumeX } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { BUILDINGS } from '../game/buildings'
+import { ENVIRONMENT } from '../game/constants'
 import { formatResourceValue, RESOURCE_META } from '../game/resources'
 import { analyzeMissionBehavior, calculateMissionScore, getObjectiveProgress, getObjectiveTarget, isObjectiveComplete } from '../game/model'
 import { MISSION_PROFILES } from '../game/missionProfiles'
@@ -125,8 +126,9 @@ export function EndScreen({ state }: { state: GameState }) {
             <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
               <Stat label={t.fatigue} value={`${Math.round(state.fatigue)}%`} icon="🪫" />
               <Stat label={t.morale} value={`${Math.round(state.morale)}%`} icon="🧑‍🚀" />
-              <Stat label={t.radiationExposure} value={`${state.radiationExposure.toFixed(1)} mSv / 600`} icon="☢️" />
-              <Stat label={isArabic ? 'تحذير حد الإشعاع المهني' : 'Career radiation limit warning'} value={state.permanentRadiationDamageWarning ? (isArabic ? 'مفعّل' : 'Triggered') : (isArabic ? 'لا' : 'No')} icon="⚠️" />
+              <Stat label={t.radiationExposure} value={`${state.radiationExposure.toFixed(1)} mSv / ${ENVIRONMENT.gameRadiationWarningThresholdMsv} ${isArabic ? 'عتبة اللعبة' : 'game alert threshold'}`} icon="☢️" />
+              <Stat label={isArabic ? 'تنبيه الإشعاع التدريبي' : 'Game radiation training alert'} value={state.permanentRadiationDamageWarning ? (isArabic ? 'مفعّل' : 'Triggered') : (isArabic ? 'لا' : 'No')} icon="⚠️" />
+              <p className="col-span-2 text-[10px] leading-5 text-slate-500 sm:col-span-3">{isArabic ? 'عتبة اللعبة ليست حدًا طبيًا أو تشغيليًا للتعرض. راجع مصادر الإشعاع في NASA؛ لا تحدد هذه المحاكاة المخاطر الصحية.' : 'The game threshold is not a medical or operational exposure limit. See NASA radiation references; this simulator does not determine health risk.'}</p>
               <Stat label={t.rescues} value={state.totalRescues} icon="🛡️" />
               <Stat label={t.lessonsProgress} value={`${state.lessonsCompleted.length}/6`} icon="📚" />
             </div>
@@ -275,7 +277,7 @@ export function EndScreen({ state }: { state: GameState }) {
               </p>
               <p className="mt-1 text-3xl font-black text-emerald-200">{astronautDuty.percent}%</p>
               <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/10" role="progressbar" aria-label={isArabic ? 'إنجاز الواجبات اليومية' : 'Daily duty completion'} aria-valuemin={0} aria-valuemax={100} aria-valuenow={astronautDuty.percent}>
-                <span className="block h-full rounded-full bg-emerald-300 transition-[width] duration-500" style={{ width: `${astronautDuty.percent}%` }} />
+                <span className="block h-full w-full origin-left rounded-full bg-emerald-300 transition-transform duration-500" style={{ transform: `scaleX(${astronautDuty.percent / 100})`, transformOrigin: isArabic ? 'right' : 'left' }} />
               </div>
             </div>
             <p className="mt-4 text-xs font-bold uppercase tracking-[.2em] text-cyan-200/80">Astra One · Mission Control</p>

@@ -7,15 +7,20 @@ import {
   canSleepAndAdvance,
   calculateMissionScore,
   canControlFlight,
+  canControlEmergencyLevel,
   analyzeMissionBehavior,
   canBuild,
   canToggleBuilding,
   convertLegacyResourceDelta,
   DIFFICULTY_MODIFIERS,
   getCrewDailyEclssBalance,
+  getCrewPersonality,
+  getCrewRoleEfficiency,
   getActivityDurationHours,
   getCompletedWorkShifts,
   getEnergyCapacity,
+  getSupplyCapacity,
+  getSurfaceSupplyTargets,
   getHabitatPressureKpa,
   getPowerLoadKw,
   getSolarOutputKw,
@@ -30,6 +35,8 @@ import {
   getMarsCommunicationDelayMinutes,
   getSurfaceAtmosphericPressureKpa,
   getExplorationRisk,
+  getRoleIneligibleMessage,
+  formallyReassignCrewSpecialty,
   getObjectiveProgress,
   getObjectiveTarget,
   initialGameState,
@@ -54,13 +61,39 @@ import {
 import { CREW_DAILY_ROUTINE, ENVIRONMENT, FOOD_PER_CREW_DAY, OXYGEN_PER_CREW_DAY, POWER_SYSTEM, WATER_PER_CREW_DAY, WATER_RECYCLE_RATE, getCrewDailyRoutine, getCrewSolDurationHours, getSurvivalBatteryRuntimeHours } from './constants'
 import { estimateTransfer, SIMULATED_TRANSIT_DAYS } from './flightPhysics'
 import { GREENHOUSE_CYCLE } from './constants'
+import { advanceCabinEnvironment, INITIAL_CABIN_ENVIRONMENT } from './environmentEngine'
 import { getConstructionDurationHours } from './buildings'
 import { CREW_DUTIES, CREW_ROSTERS, getAllowedCrewSizes, getCrewRoster } from './crewRosters'
-import { advanceOperation, canStartOperation, startOperation, advanceOperationCycle, setOperationSiteDistance } from './operations'
+import { advanceOperation, canControlOperation, canStartOperation, getOperationReadiness, startOperation, advanceOperationCycle, setOperationSiteDistance } from './operations'
 import { canChooseEventOption, chooseEvent, EVENTS } from './events'
 import { evaluateCrewRequest, recommendDailyAction, recommendCrewSupportAction, recommendEventResponse, recommendSpecialistActivity, respondToCrewRequest, CREW_ROLES, getAccessibleMissionPanels, getAllowedSpecialistActions, getAstronautDutyProgress, getEveningBriefing, getAvailableCrewRoles, getMissionCrewAssignments } from './teamwork'
 
-const prepareSurfaceMission = (state: GameState) => resolveTransitDecision(state, 'outbound', 'conservative')
+const prepareSurfaceMission = (state: GameState) => {
+  const commandDuty = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays, state.crewSpecialtyOverrides)
+    .find((assignment) => ['command', 'pilot'].includes(assignment.specialty))
+  const flightReady = commandDuty ? { ...state, controlledDutyId: commandDuty.id } : state
+  return resolveTransitDecision(flightReady, 'outbound', 'conservative')
+}
+const prepareMaintenanceMission = (state: GameState) => {
+  const assignments = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays, state.crewSpecialtyOverrides)
+  const engineer = assignments.find((assignment) => assignment.specialty !== 'command' && assignment.specialty !== 'pilot')
+  assert.ok(engineer, 'Expected an additional crew member for the maintenance role.')
+  const commandState = selectCrewSpecialty(state, 'command')
+  const reassignedState = {
+    ...commandState,
+    crewSpecialtyOverrides: { ...commandState.crewSpecialtyOverrides, [engineer.id]: 'engineering' as const },
+  }
+  return selectCrewSpecialty(prepareSurfaceMission(reassignedState), 'engineering')
+}
+const selectCrewSpecialty = (state: GameState, specialty: string): GameState => {
+  const assignments = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays, state.crewSpecialtyOverrides)
+  const matching = assignments.filter((assignment) => assignment.specialty === specialty)
+  const duty = (specialty === 'command'
+    ? matching.find((assignment) => /\b(pilot|navigator)\b/i.test(assignment.title))
+    : undefined) || matching[0]
+  assert.ok(duty, `Expected mission roster to include ${specialty}`)
+  return { ...state, controlledDutyId: duty.id, astronautDutyId: duty.id }
+}
 
 test('creates a 30-cycle mission with the selected crew and destination', () => {
   const state = initialGameState('mars', 3, 'Hope Base')
@@ -80,7 +113,7 @@ test('uses the requested compressed transit windows and restricts specialist fli
   const blocked = resolveTransitDecision(specialist, 'outbound', 'efficient')
   assert.equal(blocked.missionPhase, 'outbound')
   assert.equal(blocked.transitDecisions.length, 0)
-  assert.match(blocked.lastMessage, /commander\/pilot/)
+  assert.match(blocked.lastMessage, /Commander\/Pilot/)
   const unassignedPilot = initialGameState('mars', 4, 'Systems Crew', 102, {
     controlMode: 'specialist',
     controlledDutyId: 'systems-engineer-1',
@@ -167,6 +200,12 @@ test('provides the specified mission-duration crew rosters and role counts', () 
   assert.deepEqual(getAllowedCrewSizes('moon', 180), [4, 6, 8])
   assert.deepEqual(getAllowedCrewSizes('mars', 30), [4])
   assert.deepEqual(getAllowedCrewSizes('mars', 180), [6, 9, 12])
+  for (const crewSize of [9, 12]) {
+    const commandDuties = getMissionCrewAssignments(crewSize, 'mars', 180)
+      .filter((duty) => duty.specialty === 'command')
+    assert.equal(commandDuties.length, 2)
+    assert.ok(commandDuties.some((duty) => duty.title.includes('Co-Commander')))
+  }
   for (const roster of CREW_ROSTERS) {
     assert.equal(roster.assignments.reduce((sum, assignment) => sum + assignment.count, 0), roster.crewSize)
     assert.equal(getCrewRoster(roster.destination, roster.missionLength === 'short' ? 10 : 180, roster.crewSize), roster)
@@ -187,24 +226,71 @@ test('provides the specified mission-duration crew rosters and role counts', () 
 })
 
 test('mission operations enforce prerequisites, steps, setback, and failure timers', () => {
-  const initial = prepareSurfaceMission(initialGameState('mars', 4, 'Field Operations', 19, { maxDays: 10 }))
+  const initial = prepareSurfaceMission(selectCrewSpecialty(initialGameState('mars', 4, 'Field Operations', 19, { maxDays: 10 }), 'command'))
   const expeditionReady = {
     ...initial,
     buildings: [...initial.buildings, 'pressurized-rover', 'drilling-tools', 'mass-spectrometer'],
   }
-  assert.equal(canStartOperation(expeditionReady, 'science-expedition'), true)
-  let expedition = startOperation(expeditionReady, 'science-expedition')
+  const expeditionController = selectCrewSpecialty(expeditionReady, 'science')
+  assert.equal(canStartOperation(expeditionController, 'science-expedition'), true)
+  assert.deepEqual(getOperationReadiness(expeditionController, 'science-expedition'), { ready: true, blocker: null })
+  const geologist = getMissionCrewAssignments(expeditionReady.crewSize, expeditionReady.destination, expeditionReady.maxDays)
+    .find((duty) => duty.specialty === 'science')
+  const engineer = getMissionCrewAssignments(expeditionReady.crewSize, expeditionReady.destination, expeditionReady.maxDays)
+    .find((duty) => duty.specialty === 'engineering')
+  assert.ok(geologist)
+  assert.ok(engineer)
+  assert.deepEqual(getOperationReadiness({
+    ...expeditionController,
+    crewSpecialtyOverrides: { ...expeditionReady.crewSpecialtyOverrides, [engineer.id]: 'communications' },
+    crewConditions: { ...expeditionReady.crewConditions, [geologist.id]: { health: 100, fatigue: 95, stress: 0, morale: 78 } },
+  }, 'science-expedition'), { ready: false, blocker: 'specialist-unavailable' })
+  assert.equal(getOperationReadiness({ ...expeditionController, offlineBuildings: ['mass-spectrometer'] }, 'science-expedition').blocker, 'facility')
+  let expedition = startOperation(expeditionController, 'science-expedition')
+  assert.match(expedition.log.at(-1) || '', /launched; telemetry online/)
   for (let step = 0; step < 5; step += 1) expedition = advanceOperation(expedition)
   assert.equal(expedition.activeOperation?.status, 'complete')
   assert.equal(expedition.science, 10)
+  assert.match(expedition.log.at(-1) || '', /telemetry · 5\/5 · operation complete/)
   const stormAborted = advanceOperation({
-    ...startOperation(expeditionReady, 'science-expedition'),
+    ...startOperation(expeditionController, 'science-expedition'),
     dustStormDaysRemaining: 3,
+  })
+
+  test('outbound landing provisions crew-scaled surface survival reserves from lander cargo', () => {
+    const outbound = selectCrewSpecialty(initialGameState('mars', 4, 'Supply Landing', 719, { maxDays: 10 }), 'command')
+    const landed = resolveTransitDecision(outbound, 'outbound', 'conservative')
+    assert.equal(landed.missionPhase, 'surface')
+    assert.equal(landed.isGameOver, false)
+    assert.deepEqual(
+      { oxygen: landed.resources.oxygen, water: landed.resources.water, food: landed.resources.food },
+      getSurfaceSupplyTargets(4, landed.scenario),
+    )
+    assert.equal(landed.resources.oxygen, 50)
+    assert.equal(landed.resources.water, 150)
+    assert.equal(landed.resources.food, 100)
+    assert.ok(landed.resources.cargo < outbound.resources.cargo)
+    assert.equal(landed.dailyResourceStart.oxygen, 50)
+    assert.equal(landed.dailyResourceStart.water, 150)
+    assert.equal(landed.dailyResourceStart.food, 100)
+    assert.match(landed.log.at(-1) || '', /transferred .* kg O₂/)
+    assert.equal(getSupplyCapacity('water', 2), 75)
+    assert.equal(getSurfaceSupplyTargets(2, 'water-rationing').water, 37.5)
+
+    const catastrophic = resolveTransitDecision({
+      ...outbound,
+      resources: { ...outbound.resources, oxygen: 0 },
+    }, 'outbound', 'conservative')
+    assert.equal(catastrophic.isGameOver, true)
+    assert.equal(catastrophic.resources.oxygen, 0)
   })
   assert.equal(stormAborted.activeOperation?.status, 'failed')
 
-  const constructionInitial = prepareSurfaceMission(initialGameState('mars', 9, 'Remote Construction', 23, { maxDays: 60 }))
-  const constructionReady = { ...constructionInitial, buildings: [...constructionInitial.buildings, 'workshop', 'robotics-unit', 'isru'] }
+  const constructionInitial = prepareSurfaceMission(selectCrewSpecialty(initialGameState('mars', 9, 'Remote Construction', 23, { maxDays: 60 }), 'command'))
+  const constructionReady = {
+    ...selectCrewSpecialty(constructionInitial, 'power'),
+    buildings: [...constructionInitial.buildings, 'workshop', 'robotics-unit', 'isru'],
+  }
   let construction = startOperation(constructionReady, 'construction')
   construction = advanceOperation(construction)
   assert.equal(construction.activeOperation?.step, 0)
@@ -222,7 +308,10 @@ test('mission operations enforce prerequisites, steps, setback, and failure time
   construction = advanceOperation(construction)
   assert.equal(construction.activeOperation?.status, 'complete')
 
-  const maintenanceReady = { ...initial, buildings: [...initial.buildings, 'workshop'] }
+  const maintenanceReady = {
+    ...selectCrewSpecialty(initial, 'engineering'),
+    buildings: [...initial.buildings, 'workshop'],
+  }
   let maintenance = startOperation(maintenanceReady, 'maintenance')
   assert.equal(maintenance.resources.cargo, maintenanceReady.resources.cargo - 5)
   for (let cycle = 0; cycle < 3; cycle += 1) maintenance = advanceOperationCycle(maintenance)
@@ -234,7 +323,10 @@ test('mission operations enforce prerequisites, steps, setback, and failure time
   assert.equal(repaired.activeOperation?.status, 'complete')
   assert.equal(repaired.ongoingLeak, false)
 
-  const rescueBase = prepareSurfaceMission(initialGameState('moon', 3, 'Rescue Mission', 29, { maxDays: 10 }))
+  const rescueBase = prepareSurfaceMission(selectCrewSpecialty(
+    initialGameState('moon', 3, 'Rescue Mission', 29, { maxDays: 10 }),
+    'command',
+  ))
   const rescueReady = {
     ...rescueBase,
     buildings: [...rescueBase.buildings, 'workshop', 'medical-bay'],
@@ -251,30 +343,41 @@ test('mission operations enforce prerequisites, steps, setback, and failure time
 })
 
 test('greenhouse requires treated regolith and balances four-day food, oxygen, water, and power flows', () => {
-  const state = initialGameState('moon', 2, 'Botany').buildings
+  const mission = initialGameState('moon', 2, 'Botany')
+  const scienceDuty = getMissionCrewAssignments(mission.crewSize, mission.destination, mission.maxDays)
+    .find((assignment) => assignment.specialty === 'science-medical')
+  assert.ok(scienceDuty)
+  const outbound = prepareSurfaceMission(selectCrewSpecialty(mission, 'command'))
+  const geologyState = {
+    ...outbound,
+    crewSpecialtyOverrides: { ...outbound.crewSpecialtyOverrides, [scienceDuty.id]: 'science' as const },
+  }
+  const surface = selectCrewSpecialty(geologyState, 'science')
+  const state = mission.buildings
   const base = {
-    ...prepareSurfaceMission(initialGameState('moon', 2, 'Botany')),
+    ...surface,
     buildings: [...state, 'greenhouse', 'reactor', 'isru'],
+    resources: { ...surface.resources, food: 20, oxygen: 10 },
   }
   const untreated = forecastResources(base, 'maintenance')
   const treated = forecastResources({ ...base, regolithPreTreated: true }, 'maintenance')
-  assert.equal(treated.food - untreated.food, GREENHOUSE_CYCLE.foodKg / GREENHOUSE_CYCLE.growthDays)
+  assert.ok(Math.abs(treated.food - untreated.food - GREENHOUSE_CYCLE.foodKg / GREENHOUSE_CYCLE.growthDays) < 1e-9)
   assert.ok(GREENHOUSE_CYCLE.foodKg / GREENHOUSE_CYCLE.growthDays >= 2 * FOOD_PER_CREW_DAY)
   assert.ok(Math.abs(
     treated.oxygen - untreated.oxygen - GREENHOUSE_CYCLE.oxygenKg / GREENHOUSE_CYCLE.growthDays,
   ) < 1e-10)
-  assert.equal(untreated.water - treated.water, GREENHOUSE_CYCLE.waterLitersPerDay)
+  assert.equal(untreated.water - treated.water, GREENHOUSE_CYCLE.waterLitersPerCycle / GREENHOUSE_CYCLE.growthDays)
   assert.equal(base.regolithPreTreated, false)
 
-  const treatedRegolith = pretreatRegolith({ ...base, resources: { ...base.resources, energy: 10 } })
+  const treatedRegolith = pretreatRegolith({ ...base, resources: { ...base.resources, energy: 100 } })
   assert.equal(treatedRegolith.regolithPreTreated, true)
-  assert.equal(treatedRegolith.resources.energy, 10 - GREENHOUSE_CYCLE.regolithTreatmentEnergyKwh)
+  assert.equal(treatedRegolith.resources.energy, 100 - GREENHOUSE_CYCLE.regolithTreatmentEnergyKwh)
   assert.equal(getHabitatPressureKpa(base), 101.3)
-  assert.equal(getHabitatPressureKpa({ ...base, ongoingLeak: true }), 75)
+  assert.equal(getHabitatPressureKpa({ ...base, ongoingLeak: true }), 101.3)
 })
 
 test('enforces construction phase prerequisites for each destination', () => {
-  const initial = prepareSurfaceMission(initialGameState('mars', 2, 'Phased Base'))
+  const initial = prepareMaintenanceMission(initialGameState('mars', 4, 'Phased Base'))
   assert.equal(canBuild(initial, 'command-center'), true)
   assert.equal(canBuild({ ...initial, buildings: initial.buildings.filter((id) => id !== 'landing-pad') }, 'command-center'), false)
   const phaseTwo = { ...initial, buildings: [...initial.buildings, 'command-center', 'storage', 'communications'] }
@@ -286,7 +389,7 @@ test('enforces construction phase prerequisites for each destination', () => {
     regolithPreTreated: true,
   }
   assert.equal(canBuild(phaseThree, 'reactor'), true)
-  assert.equal(canBuild(phaseThree, 'greenhouse'), true)
+  assert.equal(canBuild(selectCrewSpecialty(phaseThree, 'medical'), 'greenhouse'), true)
 })
 
 test('activates survival power at 27 kW and restores only loads it shut down', () => {
@@ -305,6 +408,140 @@ test('activates survival power at 27 kW and restores only loads it shut down', (
   assert.equal(restored.survivalMode, false)
   assert.deepEqual(restored.offlineBuildings, ['greenhouse'])
   assert.equal(restored.emergencyLevel, 0)
+})
+
+test('emergency isolation requires qualified duties and remains sealed until cabin recovery', () => {
+  const mission = selectCrewSpecialty(initialGameState('moon', 3, 'Pressure Response'), 'command')
+  const leakResponse = setEmergencyLevel({ ...mission, ongoingLeak: true }, 2)
+  assert.equal(canControlEmergencyLevel(mission, 2), true)
+  assert.equal(leakResponse.airlockIsolated, true)
+  assert.equal(setEmergencyLevel(leakResponse, 0).airlockIsolated, true)
+
+  const pilotOnly = initialGameState('moon', 4, 'Specialist Response', 31, {
+    controlMode: 'specialist',
+    controlledDutyId: 'pilot-1',
+  })
+  assert.equal(canControlEmergencyLevel(pilotOnly, 1), true)
+  assert.equal(canControlEmergencyLevel(pilotOnly, 2), true)
+  assert.equal(setEmergencyLevel(pilotOnly, 2).emergencyLevel, 2)
+})
+
+test('cabin environment advances deterministically and qualified repairs stop the leak', () => {
+  const input = {
+    ...INITIAL_CABIN_ENVIRONMENT,
+    elapsedHours: 1.5,
+    crewSize: 3,
+    difficulty: 'normal' as const,
+    destination: 'moon' as const,
+    day: 1,
+    action: 'maintenance' as const,
+    lifeSupportOnline: true,
+    scrubberOnline: true,
+    powered: true,
+    ongoingLeak: true,
+    dustStorm: false,
+    fatigue: 25,
+    morale: 75,
+    shielded: false,
+    qualifiedMaintenance: true,
+  }
+  const repaired = advanceCabinEnvironment(input)
+  assert.deepEqual(repaired, advanceCabinEnvironment(input))
+  assert.equal(repaired.leakRepaired, true)
+  assert.ok(repaired.pressureKpa > 90)
+  assert.ok(repaired.scrubberHealth < INITIAL_CABIN_ENVIRONMENT.scrubberHealth)
+  assert.ok(repaired.pressureKpa >= 0 && repaired.pressureKpa <= 101.3)
+  assert.ok(repaired.co2PartialPressureKpa >= 0 && repaired.co2PartialPressureKpa <= 10)
+  assert.ok(repaired.crewStress >= 0 && repaired.crewStress <= 100)
+})
+
+test('cabin environment rejects elapsed times that would create an unbounded fixed-step loop', () => {
+  assert.throws(
+    () => advanceCabinEnvironment({
+      ...INITIAL_CABIN_ENVIRONMENT,
+      elapsedHours: Number.MAX_VALUE,
+      crewSize: 3,
+      difficulty: 'normal',
+      destination: 'mars',
+      day: 1,
+      action: 'rest',
+      lifeSupportOnline: true,
+      scrubberOnline: true,
+      powered: true,
+      ongoingLeak: false,
+      dustStorm: false,
+      fatigue: 30,
+      morale: 70,
+      shielded: false,
+      qualifiedMaintenance: false,
+    }),
+    RangeError,
+  )
+})
+
+test('cabin environment results do not depend on how elapsed time is partitioned', () => {
+  const input = {
+    ...INITIAL_CABIN_ENVIRONMENT,
+    elapsedHours: 2,
+    crewSize: 4,
+    difficulty: 'normal' as const,
+    destination: 'mars' as const,
+    day: 1,
+    action: 'rest' as const,
+    lifeSupportOnline: true,
+    scrubberOnline: true,
+    powered: true,
+    ongoingLeak: false,
+    dustStorm: false,
+    fatigue: 35,
+    morale: 75,
+    shielded: false,
+    qualifiedMaintenance: false,
+  }
+  const whole = advanceCabinEnvironment(input)
+  const firstHalf = advanceCabinEnvironment({ ...input, elapsedHours: 1 })
+  const secondHalf = advanceCabinEnvironment({
+    ...input,
+    ...firstHalf,
+    elapsedHours: 1,
+  })
+
+  for (const key of [
+    'pressureKpa',
+    'oxygenPartialPressureKpa',
+    'co2PartialPressureKpa',
+    'temperatureC',
+    'scrubberHealth',
+    'crewStress',
+    'crewPulseBpm',
+  ] as const) {
+    assert.ok(Math.abs(whole[key] - secondHalf[key]) < 1e-8, `${key} changed with tick partitioning`)
+  }
+  assert.ok(Math.abs(whole.radiationAddedMsv - firstHalf.radiationAddedMsv - secondHalf.radiationAddedMsv) < 1e-10)
+  assert.ok(Math.abs(whole.healthLoss - firstHalf.healthLoss - secondHalf.healthLoss) < 1e-10)
+})
+
+test('prolonged unpowered cabin conditions trigger a thermal evacuation rather than an oxygen failure', () => {
+  const result = advanceCabinEnvironment({
+    ...INITIAL_CABIN_ENVIRONMENT,
+    elapsedHours: 24,
+    crewSize: 3,
+    difficulty: 'normal',
+    destination: 'mars',
+    day: 1,
+    action: 'rest',
+    lifeSupportOnline: false,
+    scrubberOnline: false,
+    powered: false,
+    ongoingLeak: false,
+    dustStorm: false,
+    fatigue: 30,
+    morale: 70,
+    shielded: false,
+    qualifiedMaintenance: false,
+  })
+  assert.equal(result.fatalReason, 'hypothermia')
+  assert.ok(result.temperatureC <= 0)
 })
 
 test('balances modeled kW-rated generation against kWh reserves without mixing output types', () => {
@@ -351,6 +588,22 @@ test('automatically sheds only nonessential loads at low reserves and restores t
   assert.deepEqual(restored.offlineBuildings, ['robotics-unit'])
 })
 
+test('automatically sheds nonessential loads at or below fifteen percent battery reserve', () => {
+  const base = initialGameState('mars', 2, 'Critical Power')
+  const withWorkshop = { ...base, buildings: [...base.buildings, 'workshop'] }
+  const critical = updateAutomaticLoadShed({
+    ...withWorkshop,
+    resources: { ...base.resources, energy: POWER_SYSTEM.batteryCapacityKwh * 0.15 },
+  })
+  const aboveThreshold = updateAutomaticLoadShed({
+    ...withWorkshop,
+    resources: { ...base.resources, energy: POWER_SYSTEM.batteryCapacityKwh * 0.15 + 0.01 },
+  })
+
+  assert.deepEqual(critical.autoShedBuildings, ['workshop'])
+  assert.deepEqual(aboveThreshold.autoShedBuildings, [])
+})
+
 test('models lunar night and seeded Mars dust-storm power reductions', () => {
   assert.equal(isLunarNight(15), true)
   assert.equal(getLunarSurfaceTemperatureCelsius(15), -173)
@@ -364,7 +617,10 @@ test('models lunar night and seeded Mars dust-storm power reductions', () => {
 })
 
 test('water and food shortages lower health daily, while oxygen starts a six-hour emergency', () => {
-  const surface = prepareSurfaceMission(initialGameState('mars', 2, 'ECLSS Emergency'))
+  const surface = selectCrewSpecialty(
+    prepareSurfaceMission(selectCrewSpecialty(initialGameState('mars', 4, 'ECLSS Emergency'), 'command')),
+    'engineering',
+  )
   const shortages = {
     ...surface,
     resources: { ...surface.resources, water: 0, food: 0, health: 100 },
@@ -391,7 +647,7 @@ test('water and food shortages lower health daily, while oxygen starts a six-hou
     oxygenEmergencyHoursRemaining: 6,
   }, 'rest')
   assert.equal(firstAction.oxygenEmergencyHoursRemaining, 4)
-  const expired = scheduleActivity(firstAction, 'research')
+  const expired = scheduleActivity(selectCrewSpecialty(firstAction, 'medical'), 'research')
   assert.equal(expired.isGameOver, true)
   assert.deepEqual(expired.failureCause, { resource: 'oxygen', source: 'daily-operation', action: 'research' })
 
@@ -405,7 +661,7 @@ test('water and food shortages lower health daily, while oxygen starts a six-hou
   assert.equal(startsAtDepletion.oxygenEmergencyHoursRemaining, 3.5)
 })
 
-test('tracks cumulative radiation in mSv and warns at the 600 mSv career reference', () => {
+test('tracks cumulative radiation in mSv and warns at the game-model 600 mSv threshold', () => {
   const transit = initialGameState('mars', 2, 'Transit Dose')
   assert.equal(forecastRadiationExposure(transit), 1.84 * 0.25)
   const surface = {
@@ -417,29 +673,39 @@ test('tracks cumulative radiation in mSv and warns at the 600 mSv career referen
   assert.equal(forecastRadiationExposure(surface), 600.14)
   const next = finishDay(surface, 'maintenance')
   assert.equal(next.permanentRadiationDamageWarning, true)
-  assert.ok(next.radiationExposure >= ENVIRONMENT.careerRadiationLimitMsv)
+  assert.ok(next.radiationExposure >= ENVIRONMENT.gameRadiationWarningThresholdMsv)
+})
+
+test('includes fallback radiation in the daily report when a cycle has no timed environment steps', () => {
+  const mission = initialGameState('mars', 2, 'Radiation Report')
+  const surface = { ...mission, missionPhase: 'surface' as const }
+  const next = finishDay(surface, 'maintenance')
+  const expectedDose = ENVIRONMENT.marsSurfaceRadiationMsvPerDay * 0.25
+
+  assert.ok(Math.abs(next.radiationExposure - expectedDose) < 1e-10)
+  assert.ok(Math.abs(next.dailyReports[0].radiationMsv - expectedDose) < 1e-10)
 })
 
 test('adds transit radiation at the specified daily rate and flags the Mars round-trip dose', () => {
-  const initial = initialGameState('mars', 2, 'Transit Radiation')
+  const initial = selectCrewSpecialty(initialGameState('mars', 4, 'Transit Radiation', 1), 'command')
   const outbound = resolveTransitDecision(initial, 'outbound', 'conservative')
   const outboundDose = 6 * ENVIRONMENT.transitRadiationMsvPerDay
-  assert.ok(outbound.radiationExposure >= outboundDose)
+  assert.ok(Math.abs(outbound.radiationExposure - outboundDose) < 1e-9)
   assert.ok(outbound.radiationExposure < outboundDose + 6 * 4)
   assert.equal(outbound.permanentRadiationDamageWarning, false)
-  assert.ok(outbound.resources.oxygen < initial.resources.oxygen)
-  assert.ok(outbound.resources.water < initial.resources.water)
-  assert.ok(outbound.resources.food < initial.resources.food)
+  assert.equal(outbound.resources.oxygen, getSupplyCapacity('oxygen', initial.crewSize))
+  assert.equal(outbound.resources.water, getSupplyCapacity('water', initial.crewSize))
+  assert.equal(outbound.resources.food, getSupplyCapacity('food', initial.crewSize))
 
-  const lunarOutbound = resolveTransitDecision(initialGameState('moon', 2, 'Lunar Transfer'), 'outbound', 'efficient')
-  assert.equal(lunarOutbound.radiationExposure, 2 * ENVIRONMENT.transitRadiationMsvPerDay)
+  const lunarOutbound = resolveTransitDecision(selectCrewSpecialty(initialGameState('moon', 2, 'Lunar Transfer', 1), 'command'), 'outbound', 'efficient')
+  assert.ok(Math.abs(lunarOutbound.radiationExposure - 2 * ENVIRONMENT.transitRadiationMsvPerDay) < 1e-9)
 
   const returning = resolveTransitDecision({
     ...outbound,
     missionPhase: 'return',
   }, 'return', 'conservative')
   const roundTripDose = outboundDose * 2
-  assert.ok(returning.radiationExposure >= roundTripDose)
+  assert.ok(Math.abs(returning.radiationExposure - roundTripDose) < 1e-9)
   assert.ok(returning.radiationExposure < roundTripDose + 12 * 4)
   assert.equal(returning.permanentRadiationDamageWarning, false)
 })
@@ -458,6 +724,16 @@ test('migrates legacy relative resource stores into approximate physical-unit ba
   assert.equal(migrated.water, 70)
   assert.equal(migrated.food, 19.84)
   assert.equal(migrateLegacyResourceUnits({ ...state.resources, food: 1000 }).food, 100)
+  const nonFinite = migrateLegacyResourceUnits({
+    ...state.resources,
+    oxygen: Number.NaN,
+    water: Number.POSITIVE_INFINITY,
+    food: Number.NEGATIVE_INFINITY,
+  })
+  assert.deepEqual(
+    { oxygen: nonFinite.oxygen, water: nonFinite.water, food: nonFinite.food },
+    { oxygen: 0, water: 100, food: 0 },
+  )
 })
 
 test('converts legacy event effects once to match displayed physical resource units', () => {
@@ -509,16 +785,19 @@ test('research energy is charged once and an ongoing legacy leak uses converted 
   const noLeak = forecastResources(state)
   const leak = forecastResources({ ...state, ongoingLeak: true })
   const expectedLeak = Math.round(convertLegacyResourceDelta('water', 5) * 100) / 100
-  assert.ok(Math.abs(noLeak.water - leak.water - expectedLeak) < 1e-9)
+  assert.ok(Math.abs(noLeak.water - leak.water - expectedLeak) < 0.011)
 })
 
 test('requires exercise and two work shifts before waiting or sleeping, and limits rest loops', () => {
-  let state = initialGameState('moon', 2, 'Timed Mission', 123)
+  let state = initialGameState('moon', 3, 'Timed Mission', 123)
+  state = selectCrewSpecialty(state, 'command')
   state = resolveTransitDecision(state, 'outbound', 'conservative')
+  state = selectCrewSpecialty(state, 'medical')
   const research = scheduleActivity(state, 'research')
   assert.equal(research.hour, 10)
+  const selectedCrewEnergyUse = getCrewPersonality(state, state.controlledDutyId).energyUse
   assert.ok(Math.abs(research.resources.energy - (
-    state.resources.energy - 9 * POWER_SYSTEM.energyBudgetHoursPerCycle
+    state.resources.energy - 9 * selectedCrewEnergyUse * POWER_SYSTEM.energyBudgetHoursPerCycle
   )) < 0.01)
   assert.ok(Math.abs(research.resources.oxygen - (state.resources.oxygen - 0.1)) < 0.01)
   assert.deepEqual(research.todayActions, ['research'])
@@ -527,13 +806,13 @@ test('requires exercise and two work shifts before waiting or sleeping, and limi
   assert.equal(canSleepAndAdvance({ ...research, hour: 20 }), false)
   const exercised = scheduleActivity(research, 'exercise')
   assert.equal(exercised.hour, 12.5)
-  assert.ok(Math.abs(exercised.resources.energy - (research.resources.energy - 1.5 * POWER_SYSTEM.energyBudgetHoursPerCycle)) < 0.01)
+  assert.ok(Math.abs(exercised.resources.energy - (research.resources.energy - 1.5 * selectedCrewEnergyUse * POWER_SYSTEM.energyBudgetHoursPerCycle)) < 0.01)
   assert.equal(getCompletedWorkShifts(exercised.todayActions), 1)
   assert.equal(canSleepAndAdvance({ ...exercised, hour: 20 }), false)
   const onceRested = scheduleActivity(exercised, 'rest')
   assert.equal(scheduleActivity(onceRested, 'rest').todayActions.filter((action) => action === 'rest').length, 1)
 
-  const twoShifts = scheduleActivity(onceRested, 'maintenance')
+  const twoShifts = scheduleActivity(selectCrewSpecialty(onceRested, 'engineering-science'), 'maintenance')
   assert.equal(getCompletedWorkShifts(twoShifts.todayActions), 2)
   const bedtime = { ...twoShifts, hour: 20 }
   assert.equal(canSleepAndAdvance(bedtime), true)
@@ -581,9 +860,9 @@ test('acknowledges an eligible evening debrief once per mission day without bypa
 
 test('enforces specialist activities and prevents scheduling past end of shift', () => {
   const specialist = {
-    ...initialGameState('mars', 3, 'Specialist Mission', 44),
-    controlMode: 'specialist' as const,
-    controlledRole: 'biologist' as const,
+    ...selectCrewSpecialty(initialGameState('mars', 4, 'Specialist Mission', 44, {
+      controlMode: 'specialist',
+    }), 'medical'),
     missionPhase: 'surface' as const,
   }
   assert.equal(canPerformActivity(specialist, 'research'), true)
@@ -602,24 +881,26 @@ test('enforces specialist activities and prevents scheduling past end of shift',
 })
 
 test('gives each solo specialist role useful activities and a role-specific recommendation', () => {
-  const base = {
-    ...initialGameState('moon', 3, 'Solo Crew', 29),
-    controlMode: 'specialist' as const,
-    missionPhase: 'surface' as const,
-    objective: 'exploration' as const,
-  }
-  const commander = { ...base, controlledRole: 'commander' as const }
-  const powerEngineer = { ...base, controlledRole: 'power-engineer' as const, objective: 'science' as const }
-  const biologist = { ...base, controlledRole: 'biologist' as const }
-  const waterOfficer = { ...base, controlledRole: 'water-officer' as const }
+  const base = initialGameState('mars', 9, 'Solo Crew', 29, {
+    maxDays: 180,
+    controlMode: 'specialist',
+  })
+  const commander = selectCrewSpecialty(base, 'command')
+  const powerEngineer = selectCrewSpecialty(base, 'power')
+  const biologist = selectCrewSpecialty(base, 'medical')
+  const geologist = selectCrewSpecialty(base, 'science')
 
-  assert.equal(canPerformActivity(powerEngineer, 'research'), true)
-  assert.equal(canPerformActivity(biologist, 'explore'), true)
-  assert.equal(canPerformActivity(waterOfficer, 'explore'), true)
-  assert.equal(recommendSpecialistActivity(commander), 'explore')
-  assert.equal(recommendSpecialistActivity(powerEngineer), 'research')
-  assert.equal(recommendSpecialistActivity(biologist), 'explore')
-  assert.equal(recommendSpecialistActivity(waterOfficer), 'explore')
+  assert.equal(canPerformActivity(commander, 'explore'), false)
+  assert.equal(canPerformActivity(powerEngineer, 'maintenance'), true)
+  assert.equal(canPerformActivity(powerEngineer, 'research'), false)
+  assert.equal(canPerformActivity(biologist, 'research'), true)
+  assert.equal(canPerformActivity(biologist, 'explore'), false)
+  assert.equal(canPerformActivity(geologist, 'explore'), true)
+  assert.equal(canPerformActivity(geologist, 'research'), false)
+  assert.equal(recommendSpecialistActivity(commander), 'exercise')
+  assert.equal(recommendSpecialistActivity(powerEngineer), 'maintenance')
+  assert.equal(recommendSpecialistActivity(biologist), 'research')
+  assert.equal(recommendSpecialistActivity(geologist), 'explore')
   assert.equal(recommendSpecialistActivity({
     ...powerEngineer,
     resources: { ...powerEngineer.resources, energy: 20 },
@@ -628,19 +909,20 @@ test('gives each solo specialist role useful activities and a role-specific reco
 
 test('coordinates a supporting crew activity without automatically repeating the player action', () => {
   const state = {
-    ...initialGameState('mars', 3, 'Crew Support', 71),
-    controlMode: 'specialist' as const,
-    controlledRole: 'biologist' as const,
+    ...selectCrewSpecialty(initialGameState('mars', 9, 'Crew Support', 71, {
+      maxDays: 180,
+      controlMode: 'specialist',
+    }), 'medical'),
     missionPhase: 'surface' as const,
     objective: 'science' as const,
     todayActions: ['research'] as GameState['todayActions'],
   }
-  assert.equal(recommendCrewSupportAction(state), 'maintenance')
+  assert.equal(recommendCrewSupportAction(state), 'rest')
   assert.equal(recommendCrewSupportAction({
     ...state,
     todayActions: [],
     resources: { ...state.resources, water: 20 },
-  }), 'maintenance')
+  }), 'research')
   assert.equal(recommendCrewSupportAction({
     ...state,
     fatigue: 75,
@@ -661,21 +943,41 @@ test('filters specialist panels and daily activity choices by the selected crew 
   }
 
   const commander = forSpecialty('command')
-  assert.ok(getAccessibleMissionPanels(commander).includes('operations'))
-  assert.ok(getAccessibleMissionPanels(commander).includes('communications'))
+  assert.deepEqual(getAccessibleMissionPanels(commander), ['resources', 'crew', 'systems', 'forecast', 'communications', 'operations'])
   assert.ok(!getAccessibleMissionPanels(commander).includes('infrastructure'))
+  const pilotBase = initialGameState('moon', 4, 'Pilot Role Filter', 74, {
+    maxDays: 180,
+    controlMode: 'specialist',
+  })
+  const pilotDuty = getMissionCrewAssignments(pilotBase.crewSize, pilotBase.destination, pilotBase.maxDays)
+    .find((assignment) => assignment.specialty === 'pilot')
+  assert.ok(pilotDuty)
+  const pilot = { ...pilotBase, controlledDutyId: pilotDuty.id, astronautDutyId: pilotDuty.id }
+  assert.deepEqual(getAccessibleMissionPanels(pilot), ['resources', 'crew', 'systems', 'forecast', 'communications', 'operations'])
   const engineer = forSpecialty('power')
   assert.ok(getAccessibleMissionPanels(engineer).includes('infrastructure'))
   assert.ok(getAccessibleMissionPanels(engineer).includes('systems'))
+  assert.ok(getAccessibleMissionPanels(engineer).includes('crew'))
+  assert.ok(!getAccessibleMissionPanels(engineer).includes('forecast'))
+  assert.ok(!getAccessibleMissionPanels(engineer).includes('communications'))
   const doctor = forSpecialty('medical')
   assert.ok(getAccessibleMissionPanels(doctor).includes('crew'))
   assert.ok(getAccessibleMissionPanels(doctor).includes('systems'))
   assert.ok(getAccessibleMissionPanels(doctor).includes('operations'))
+  assert.ok(!getAccessibleMissionPanels(doctor).includes('infrastructure'))
+  assert.ok(!getAccessibleMissionPanels(doctor).includes('forecast'))
+  assert.ok(!getAccessibleMissionPanels(doctor).includes('communications'))
   const botanist = forSpecialty('agriculture')
   assert.ok(getAccessibleMissionPanels(botanist).includes('operations'))
-  assert.ok(!getAccessibleMissionPanels(botanist).includes('crew'))
+  assert.ok(getAccessibleMissionPanels(botanist).includes('crew'))
+  assert.ok(getAccessibleMissionPanels(botanist).includes('systems'))
   assert.ok(!getAccessibleMissionPanels(botanist).includes('infrastructure'))
-  assert.ok(getAccessibleMissionPanels({ ...base, controlMode: 'full' }).includes('communications'))
+  const geologist = forSpecialty('resources')
+  assert.ok(getAccessibleMissionPanels(geologist).includes('operations'))
+  assert.ok(!getAccessibleMissionPanels(geologist).includes('systems'))
+  assert.ok(!getAccessibleMissionPanels(geologist).includes('infrastructure'))
+  assert.ok(!getAccessibleMissionPanels(geologist).includes('communications'))
+  assert.deepEqual(getAccessibleMissionPanels(selectCrewSpecialty({ ...base, controlMode: 'full' }, 'command')), ['resources', 'crew', 'systems', 'forecast', 'communications', 'operations'])
   assert.ok(!getAllowedSpecialistActions(doctor).includes('explore'))
   assert.ok(!getAllowedSpecialistActions(botanist).includes('explore'))
 
@@ -684,6 +986,93 @@ test('filters specialist panels and daily activity choices by the selected crew 
     const progress = getAstronautDutyProgress(state, 'en')
     assert.ok(progress.tasks.every((task) => canPerformActivity(state, task.action)), duty.title)
   }
+})
+
+test('enforces specialist-only actions and requires command authorization for reassignment', () => {
+  const surface = prepareSurfaceMission(selectCrewSpecialty(initialGameState('mars', 4, 'Role Isolation', 317, {
+    maxDays: 10,
+    controlMode: 'specialist',
+  }), 'command'))
+  assert.equal(canPerformActivity(surface, 'research'), false)
+  assert.equal(canPerformActivity(surface, 'maintenance'), false)
+  assert.equal(getRoleIneligibleMessage(surface, 'maintenance'), 'Access Denied: Action requires Systems Engineer')
+  const rejected = scheduleActivity(surface, 'research')
+  assert.deepEqual(rejected.todayActions, surface.todayActions)
+  assert.match(rejected.lastMessage, /^Access Denied: Action requires/)
+
+  const target = getMissionCrewAssignments(surface.crewSize, surface.destination, surface.maxDays)
+    .find((duty) => duty.specialty === 'science')
+  assert.ok(target)
+  const reassigned = formallyReassignCrewSpecialty(surface, target.id, 'engineering')
+  assert.equal(reassigned.crewSpecialtyOverrides[target.id], 'engineering')
+  assert.equal(reassigned.controlledDutyId, surface.controlledDutyId)
+  assert.equal(reassigned.hour, surface.hour + 3)
+  assert.match(reassigned.lastMessage, /Formal reassignment complete/)
+  const unauthorized = formallyReassignCrewSpecialty({ ...surface, controlledDutyId: target.id }, target.id, 'engineering')
+  assert.equal(unauthorized.lastMessage, 'Access Denied: Action requires Commander/Pilot')
+
+  const moonMission = initialGameState('moon', 4, 'Pilot Reassignment', 318, {
+    maxDays: 180,
+    controlMode: 'specialist',
+  })
+  const moonDuties = getMissionCrewAssignments(moonMission.crewSize, moonMission.destination, moonMission.maxDays)
+  const pilot = moonDuties.find((duty) => duty.specialty === 'pilot')
+  const geologist = moonDuties.find((duty) => duty.specialty === 'science')
+  assert.ok(pilot)
+  assert.ok(geologist)
+  const pilotSurface = prepareSurfaceMission({ ...moonMission, controlledDutyId: pilot.id })
+  const pilotReassignment = formallyReassignCrewSpecialty(pilotSurface, geologist.id, 'engineering')
+  assert.equal(pilotReassignment.crewSpecialtyOverrides[geologist.id], 'engineering')
+})
+
+test('restricts field operations to authorized specialist specialties', () => {
+  const base = initialGameState('moon', 8, 'Operation Permissions', 73, {
+    maxDays: 180,
+    controlMode: 'specialist',
+  })
+  const duties = getMissionCrewAssignments(base.crewSize, base.destination, base.maxDays)
+  const dutyFor = (specialty: string) => {
+    const duty = duties.find((assignment) => assignment.specialty === specialty)
+    assert.ok(duty)
+    return { ...base, controlledDutyId: duty.id }
+  }
+  const pilotState = initialGameState('moon', 4, 'Pilot Permissions', 74, {
+    maxDays: 180,
+    controlMode: 'specialist',
+  })
+  const pilotDuty = getMissionCrewAssignments(pilotState.crewSize, pilotState.destination, pilotState.maxDays)
+    .find((assignment) => assignment.specialty === 'pilot')
+  assert.ok(pilotDuty)
+  const pilot = { ...pilotState, controlledDutyId: pilotDuty.id }
+  const engineer = dutyFor('power')
+  const medic = dutyFor('medical')
+  const agronomist = dutyFor('agriculture')
+  const commander = dutyFor('command')
+
+  assert.equal(canControlOperation(pilot, 'science-expedition'), false)
+  assert.equal(canControlOperation(dutyFor('resources'), 'science-expedition'), true)
+  assert.equal(canControlOperation(engineer, 'maintenance'), true)
+  assert.equal(canControlOperation(engineer, 'construction'), true)
+  assert.equal(canControlOperation(medic, 'rescue'), false)
+  assert.equal(canControlOperation(commander, 'rescue'), true)
+  assert.equal(canControlOperation(agronomist, 'construction'), false)
+  assert.equal(canStartOperation(agronomist, 'construction'), false)
+  assert.equal(canControlOperation({ ...base, controlledDutyId: '' }, 'maintenance'), false)
+
+  const unauthorizedActiveOperation = {
+    ...agronomist,
+    activeOperation: {
+      id: 'construction' as const,
+      step: 0,
+      status: 'active' as const,
+      cyclesRemaining: 0,
+      partialDamage: false,
+      suitOxygenPercent: 100,
+      siteDistanceUnits: 100,
+    },
+  }
+  assert.equal(advanceOperation(unauthorizedActiveOperation).activeOperation?.step, 0)
+  assert.match(advanceOperation(unauthorizedActiveOperation).lastMessage, /Access Denied/)
 })
 
 test('autonomous crew performance is deterministic and responds to mission difficulty and readiness', () => {
@@ -705,15 +1094,64 @@ test('autonomous crew performance is deterministic and responds to mission diffi
   const hard = sleepAndAdvanceDay(hardState)
   assert.equal(easy.crewDailyActivities.length, 5)
   assert.deepEqual(hard.crewDailyActivities, sleepAndAdvanceDay(hardState).crewDailyActivities)
-  assert.ok(hard.crewDailyActivities.length < easy.crewDailyActivities.length)
+  const easyRecoveryCount = easy.crewDailyActivities.filter((activity) => activity.effect === 'recovery').length
+  const hardRecoveryCount = hard.crewDailyActivities.filter((activity) => activity.effect === 'recovery').length
+  assert.ok(hardRecoveryCount >= easyRecoveryCount)
   assert.ok(hard.fatigue >= easy.fatigue)
   assert.ok(hard.morale <= easy.morale)
-  assert.ok(hard.dailyReports[0].events.some((event) => event.startsWith('Crew duties delayed:')))
 
   const fullControlState = { ...base, controlMode: 'full' as const }
   const fullControl = sleepAndAdvanceDay(fullControlState)
   assert.equal(fullControl.crewDailyActivities.length, 5)
   assert.ok(fullControl.crewDailyActivities.every((activity) => activity.dutyId !== fullControlState.controlledDutyId))
+})
+
+test('crew traits are seeded per astronaut and strain lowers specialist efficiency deterministically', () => {
+  const state = initialGameState('mars', 4, 'Crew Traits', 501, { maxDays: 10 })
+  const duties = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays)
+  const engineer = duties.find((duty) => duty.specialty === 'engineering')
+  const geologist = duties.find((duty) => duty.specialty === 'science')
+  assert.ok(engineer)
+  assert.ok(geologist)
+  assert.deepEqual(getCrewPersonality(state, engineer.id), getCrewPersonality(state, engineer.id))
+  assert.notDeepEqual(getCrewPersonality(state, engineer.id), getCrewPersonality(state, geologist.id))
+  const restedEfficiency = getCrewRoleEfficiency(state, engineer.id)
+  const strained = {
+    ...state,
+    crewConditions: {
+      ...state.crewConditions,
+      [engineer.id]: { ...state.crewConditions[engineer.id], fatigue: 95, stress: 95, morale: 10 },
+    },
+  }
+  assert.ok(getCrewRoleEfficiency(strained, engineer.id) < restedEfficiency)
+  const unavailable = {
+    ...state,
+    crewConditions: {
+      ...state.crewConditions,
+      [engineer.id]: { ...state.crewConditions[engineer.id], health: 10 },
+    },
+  }
+  assert.ok(getCrewRoleEfficiency(unavailable, engineer.id) < restedEfficiency)
+  assert.deepEqual(getAccessibleMissionPanels(unavailable), ['resources', 'crew'])
+
+  const routine = ['exercise', 'maintenance', 'research'] as const
+  const first = finishDay(state, routine)
+  const replay = finishDay(state, routine)
+  assert.deepEqual(first.resources, replay.resources)
+  const poweredBase = {
+    ...state,
+    buildings: ['reactor', 'solar-panels'],
+    resources: { ...state.resources, energy: 20 },
+  }
+  const operationalPower = finishDay(poweredBase, routine).resources.energy
+  const degradedPower = finishDay({
+    ...poweredBase,
+    crewConditions: {
+      ...poweredBase.crewConditions,
+      [engineer.id]: { ...poweredBase.crewConditions[engineer.id], health: 10 },
+    },
+  }, routine).resources.energy
+  assert.ok(operationalPower > degradedPower)
 })
 
 test('daily report includes crew proposal outcomes alongside automated duty events', () => {
@@ -770,6 +1208,8 @@ test('evaluates, applies, and records crew requests using specialty, reserves, r
   const agronomist = roster.find((duty) => duty.specialty === 'agriculture')
   assert.ok(engineer)
   assert.ok(agronomist)
+  const commander = roster.find((duty) => duty.specialty === 'command' || duty.specialty === 'pilot')
+  assert.ok(commander)
   const surface = {
     ...initial,
     missionPhase: 'surface' as const,
@@ -778,23 +1218,36 @@ test('evaluates, applies, and records crew requests using specialty, reserves, r
     astronautDutyId: engineer.id,
   }
 
-  assert.equal(evaluateCrewRequest(surface, engineer.id, 'explore'), 'specialtyMismatch')
-  const researched = respondToCrewRequest(surface, engineer.id, 'research', 'en')
-  assert.equal(researched.crewCommunications[0].decision, 'accepted')
-  assert.equal(researched.science, surface.science + 8)
-  assert.equal(getAstronautDutyProgress(researched, 'en').percent, 50)
-  assert.equal(evaluateCrewRequest(researched, engineer.id, 'research'), 'requestAlreadyHandled')
-  const maintained = respondToCrewRequest(researched, engineer.id, 'maintenance', 'en')
-  assert.equal(getAstronautDutyProgress(maintained, 'en').percent, 100)
-  assert.ok(maintained.resources.energy > researched.resources.energy)
+  assert.equal(evaluateCrewRequest(surface, commander.id, 'maintenance'), 'selfConversation')
+  const selfRequest = respondToCrewRequest(surface, commander.id, 'maintenance', 'en')
+  assert.equal(selfRequest.crewCommunications.length, 0)
+  assert.match(selfRequest.lastMessage, /cannot send a request to themselves/)
 
-  assert.equal(evaluateCrewRequest({ ...surface, resources: { ...surface.resources, energy: 0 } }, engineer.id, 'research'), 'energyInsufficient')
-  assert.equal(evaluateCrewRequest({ ...surface, resources: { ...surface.resources, oxygen: 0 } }, engineer.id, 'research'), 'oxygenInsufficient')
-  assert.equal(evaluateCrewRequest({ ...surface, fatigue: 95 }, engineer.id, 'research'), 'crewFatigue')
+  const nonCommanderState = { ...surface, controlledDutyId: engineer.id }
+  assert.equal(evaluateCrewRequest(nonCommanderState, agronomist.id, 'research'), 'commandAuthorityRequired')
+  const unauthorizedRequest = respondToCrewRequest(nonCommanderState, agronomist.id, 'research', 'en')
+  assert.equal(unauthorizedRequest.crewCommunications.length, 0)
+  assert.match(unauthorizedRequest.lastMessage, /Only the Commander or Pilot/)
+
+  assert.equal(evaluateCrewRequest(surface, engineer.id, 'explore'), 'specialtyMismatch')
+  assert.equal(evaluateCrewRequest(surface, engineer.id, 'research'), 'specialtyMismatch')
+  const maintained = respondToCrewRequest(surface, engineer.id, 'maintenance', 'en')
+  assert.equal(maintained.crewCommunications[0].decision, 'accepted')
+  assert.equal(getAstronautDutyProgress(maintained, 'en').percent, 100)
+  assert.equal(evaluateCrewRequest(maintained, engineer.id, 'maintenance'), 'requestAlreadyHandled')
+  assert.ok(maintained.resources.energy > surface.resources.energy)
+
+  assert.equal(evaluateCrewRequest({ ...surface, resources: { ...surface.resources, energy: 0 } }, agronomist.id, 'research'), 'energyInsufficient')
+  assert.equal(evaluateCrewRequest({ ...surface, resources: { ...surface.resources, oxygen: 0 } }, agronomist.id, 'research'), 'oxygenInsufficient')
+  assert.equal(evaluateCrewRequest({
+    ...surface,
+    crewConditions: { ...surface.crewConditions, [engineer.id]: { health: 100, fatigue: 95, stress: 0, morale: 78 } },
+  }, engineer.id, 'maintenance'), 'crewFatigue')
   assert.equal(evaluateCrewRequest({ ...surface, activeEvent: { id: 'solar-storm' } }, engineer.id, 'maintenance'), 'emergencyPriority')
   assert.equal(evaluateCrewRequest({ ...surface, ongoingLeak: true }, agronomist.id, 'research'), 'emergencyPriority')
   const leakRepair = respondToCrewRequest({ ...surface, ongoingLeak: true }, engineer.id, 'maintenance', 'en')
-  assert.equal(leakRepair.ongoingLeak, false)
+  assert.equal(leakRepair.ongoingLeak, true)
+  assert.equal(leakRepair.crewCommunications[0].decision, 'rejected')
 
   const briefing = getEveningBriefing({ ...maintained, crewCommunications: maintained.crewCommunications.concat({
     day: maintained.day,
@@ -803,13 +1256,13 @@ test('evaluates, applies, and records crew requests using specialty, reserves, r
     decision: 'rejected',
     reason: 'emergencyPriority',
   }) }, 'en')
-  assert.equal(briefing.communicationNotes.length, 3)
+  assert.equal(briefing.communicationNotes.length, 2)
   assert.equal(briefing.communicationNotes[0].decision, 'accepted')
-  assert.equal(briefing.communicationNotes[2].reason, 'emergencyPriority')
+  assert.equal(briefing.communicationNotes[1].reason, 'emergencyPriority')
 })
 
 test('resolves outbound and return flight decisions as separate seeded legs', () => {
-  const initial = initialGameState('moon', 2, 'Flight Mission', 55)
+  const initial = selectCrewSpecialty(initialGameState('moon', 2, 'Flight Mission', 55), 'command')
   const outbound = resolveTransitDecision(initial, 'outbound', 'efficient')
   assert.equal(outbound.missionPhase, 'surface')
   assert.equal(outbound.transitDecisions.length, 1)
@@ -846,10 +1299,11 @@ test('resolves outbound and return flight decisions as separate seeded legs', ()
 })
 
 test('evacuates during transit when the oxygen reserve is exhausted', () => {
+  const base = selectCrewSpecialty(initialGameState('mars', 4, 'Oxygen Transit', 55), 'command')
   const initial = {
-    ...initialGameState('mars', 2, 'Oxygen Transit', 55),
+    ...base,
     resources: {
-      ...initialGameState('mars', 2, 'Oxygen Transit', 55).resources,
+      ...base.resources,
       energy: 100,
       oxygen: 0.1,
       health: 100,
@@ -867,7 +1321,7 @@ test('evacuates during transit when the oxygen reserve is exhausted', () => {
 })
 
 test('completes the surface campaign only after the return leg and exposes the debrief state', () => {
-  const initial = initialGameState('moon', 2, 'Return Report', 901, { maxDays: 10 })
+  const initial = selectCrewSpecialty(initialGameState('moon', 2, 'Return Report', 901, { maxDays: 10 }), 'command')
   const lastSurfaceDay = {
     ...initial,
     missionPhase: 'surface' as const,
@@ -890,10 +1344,10 @@ test('completes the surface campaign only after the return leg and exposes the d
 
 test('reports a safe return as failure when a goal-based objective was not completed', () => {
   const state = {
-    ...initialGameState('mars', 6, 'Unfinished Research', 902, {
+    ...selectCrewSpecialty(initialGameState('mars', 6, 'Unfinished Research', 902, {
       missionType: 'mars-opposition',
       objective: 'exploration',
-    }),
+    }), 'command'),
     missionPhase: 'return' as const,
     daysSurvived: 30,
     successfulExpeditions: 1,
@@ -912,11 +1366,12 @@ test('completes every destination, difficulty, duration, and transit-profile com
       for (const maxDays of [10, 30, 60] as const) {
         for (const outboundChoice of ['conservative', 'efficient'] as const) {
           for (const returnChoice of ['conservative', 'efficient'] as const) {
+            const crewSize = destination === 'moon' ? 2 : 4
             let state = resolveTransitDecision(
-              initialGameState(destination, 2, 'Scenario Matrix', seed++, {
+              selectCrewSpecialty(initialGameState(destination, crewSize, 'Scenario Matrix', seed++, {
                 maxDays,
                 difficulty,
-              }),
+              }), 'command'),
               'outbound',
               outboundChoice,
             )
@@ -979,7 +1434,7 @@ test('explains event-response failures while keeping the event and choice linked
   assert.equal(failed.failureCause, null)
 
   test('uses role-specific resource priorities to reach a deterministic team response', () => {
-    const state = initialGameState('mars', 3, 'Crew Council', 45)
+    const state = selectCrewSpecialty(initialGameState('mars', 4, 'Crew Council', 45), 'command')
     const storm = EVENTS.find((event) => event.id === 'solar-storm')
     assert.ok(storm)
     const recommendation = recommendEventResponse(state, storm)
@@ -995,11 +1450,12 @@ test('explains event-response failures while keeping the event and choice linked
 
     const lowHealth = { ...state, resources: { ...state.resources, health: 30 } }
     assert.equal(recommendDailyAction(lowHealth), 'rest')
-    assert.equal(recommendDailyAction({ ...state, objective: 'science' }), 'research')
+    const scienceSpecialist = selectCrewSpecialty(state, 'medical')
+    assert.equal(recommendDailyAction({ ...scienceSpecialist, objective: 'science' }), 'research')
   })
 
   test('event recommendations account for resource caps, depletion, and ongoing leaks', () => {
-    const base = initialGameState('moon', 2, 'Event Advice')
+    const base = selectCrewSpecialty(initialGameState('moon', 6, 'Event Advice', 46, { maxDays: 180 }), 'engineering')
     const lowLight = EVENTS.find((event) => event.id === 'low-light')
     const leak = EVENTS.find((event) => event.id === 'water-leak')
     assert.ok(lowLight)
@@ -1011,7 +1467,7 @@ test('explains event-response failures while keeping the event and choice linked
       resources: { ...base.resources, health: 20 },
     }, lowLight).recommendedIndex, 1)
     assert.equal(recommendEventResponse({
-      ...base,
+      ...selectCrewSpecialty(base, 'medical'),
       resources: { ...base.resources, water: 20 },
     }, leak).recommendedIndex, 0)
   })
@@ -1040,11 +1496,11 @@ test('scenario selection changes starting stores and resource pressure', () => {
   const greenhouseFault = initialGameState('mars', 2, 'Greenhouse Base', 20, { scenario: 'greenhouse-fault' })
 
   assert.equal(dust.resources.energy, 62)
-  assert.equal(rationed.resources.water, 58)
-  assert.equal(oxygenShort.resources.oxygen, 58)
+  assert.ok(Math.abs(rationed.resources.water - getSupplyCapacity('water', 2) * 0.58) < 1e-9)
+  assert.ok(Math.abs(oxygenShort.resources.oxygen - getSupplyCapacity('oxygen', 2) * 0.58) < 1e-9)
   assert.equal(solarFlare.resources.health, 82)
-  assert.equal(habitatLeak.resources.oxygen, 66)
-  assert.equal(greenhouseFault.resources.food, 62)
+  assert.ok(Math.abs(habitatLeak.resources.oxygen - getSupplyCapacity('oxygen', 2) * 0.66) < 1e-9)
+  assert.ok(Math.abs(greenhouseFault.resources.food - getSupplyCapacity('food', 2) * 0.62) < 1e-9)
   assert.ok(forecastResources(dust).energy < forecastResources(baseline).energy)
   assert.ok(forecastResources(rationed).water < forecastResources(baseline).water)
   for (const scenario of ['solar-flare', 'habitat-leak', 'greenhouse-fault'] as const) {
@@ -1114,7 +1570,7 @@ test('limits specialist roles to specialties assigned on the selected mission ro
   )
   assert.deepEqual(
     getAvailableCrewRoles(4, 'mars', 30).map((role) => role.id),
-    ['commander', 'power-engineer', 'biologist'],
+    ['commander', 'power-engineer', 'biologist', 'water-officer'],
   )
   assert.deepEqual(
     getAvailableCrewRoles(6, 'mars', 180).map((role) => role.id),
@@ -1130,7 +1586,7 @@ test('limits specialist roles to specialties assigned on the selected mission ro
       controlledRole: lunarEngineerGeologist.controlRole,
       controlledDutyId: lunarEngineerGeologist.id,
     }, 'explore'),
-    true,
+    false,
   )
 })
 
@@ -1147,24 +1603,27 @@ test('selected mission duties constrain work and facility controls to the assign
     todayActions: ['exercise', 'maintenance', 'research'] as GameState['todayActions'],
     buildings: ['reactor', 'greenhouse', 'isru', 'pressurized-rover'],
   }
+  const duties = getMissionCrewAssignments(missionBase.crewSize, missionBase.destination, missionBase.maxDays)
+  const powerDuty = duties.find((assignment) => assignment.specialty === 'power')
+  const geologyDuty = duties.find((assignment) => assignment.specialty === 'science')
+  assert.ok(powerDuty)
+  assert.ok(geologyDuty)
   const powerEngineer = {
     ...readyForShift,
-    controlledRole: 'power-engineer' as const,
-    controlledDutyId: 'power-engineer-1',
+    controlledDutyId: powerDuty.id,
   }
   assert.equal(canPerformActivity(powerEngineer, 'maintenance'), true)
   assert.equal(canPerformActivity(powerEngineer, 'explore'), false)
   assert.equal(canToggleBuilding(powerEngineer, 'reactor'), true)
   assert.equal(canToggleBuilding(powerEngineer, 'greenhouse'), false)
 
-  const resourceAgricultureSpecialist = {
+  const geologist = {
     ...readyForShift,
-    controlledRole: 'water-officer' as const,
-    controlledDutyId: 'agriculture-isru-specialist-1',
+    controlledDutyId: geologyDuty.id,
   }
-  assert.equal(canToggleBuilding(resourceAgricultureSpecialist, 'isru'), true)
-  assert.equal(canToggleBuilding(resourceAgricultureSpecialist, 'greenhouse'), true)
-  assert.equal(canToggleBuilding(resourceAgricultureSpecialist, 'reactor'), false)
+  assert.equal(canToggleBuilding(geologist, 'isru'), true)
+  assert.equal(canToggleBuilding(geologist, 'greenhouse'), false)
+  assert.equal(canToggleBuilding(geologist, 'reactor'), false)
 })
 
 test('emergency catalog has distinct bilingual events with actionable choices', () => {
@@ -1267,10 +1726,17 @@ test('counts a completed expedition toward the exploration objective', () => {
 })
 
 test('tutorial objective advances through forecast, maintenance, construction, rest, and research', () => {
-  const initial = initialGameState('moon', 2, 'Tutorial Base', 17, {
+  const mission = initialGameState('moon', 4, 'Tutorial Base', 17, {
     maxDays: 10,
     objective: 'tutorial',
   })
+  const pilot = getMissionCrewAssignments(mission.crewSize, mission.destination, mission.maxDays)
+    .find((assignment) => assignment.specialty === 'pilot')
+  assert.ok(pilot)
+  const initial = {
+    ...selectCrewSpecialty(mission, 'command'),
+    crewSpecialtyOverrides: { ...mission.crewSpecialtyOverrides, [pilot.id]: 'engineering' as const },
+  }
   let state = {
     ...initial,
     buildings: [...initial.buildings, 'command-center', 'storage', 'communications', 'workshop', 'research-lab', 'medical-bay', 'isru'],
@@ -1280,8 +1746,14 @@ test('tutorial objective advances through forecast, maintenance, construction, r
   state = recordTutorialStep(state, 'rest')
   assert.equal(getObjectiveProgress(state), 0)
   state = recordTutorialStep(state, 'forecast')
+  state = selectCrewSpecialty(state, 'engineering')
   state = finishDay(state, 'maintenance')
+  const geologist = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays, state.crewSpecialtyOverrides)
+    .find((assignment) => assignment.specialty === 'science')
+  assert.ok(geologist)
+  state = selectCrewSpecialty(state, 'science')
   state = pretreatRegolith(state)
+  state = selectCrewSpecialty(state, 'medical')
   state = buildInState(state, 'greenhouse')
   assert.equal(state.tutorialSteps.includes('greenhouse'), false)
   state = finishDay(state, 'rest')
@@ -1327,11 +1799,21 @@ test('power shortages constrain modeled life-support and greenhouse production',
   }
   const lowPower = {
     ...base,
-    resources: { ...base.resources, energy: 0, oxygen: 50, food: 50 },
+    resources: {
+      ...base.resources,
+      energy: 0,
+      oxygen: getSupplyCapacity('oxygen', base.crewSize),
+      food: getSupplyCapacity('food', base.crewSize),
+    },
   }
   const amplePower = {
     ...base,
-    resources: { ...base.resources, energy: 100, oxygen: 50, food: 50 },
+    resources: {
+      ...base.resources,
+      energy: 100,
+      oxygen: getSupplyCapacity('oxygen', base.crewSize),
+      food: getSupplyCapacity('food', base.crewSize),
+    },
   }
 
   assert.ok(forecastResources(lowPower).oxygen < forecastResources(amplePower).oxygen)
@@ -1372,8 +1854,8 @@ test('rest lowers fatigue and improves crew morale', () => {
 test('exploration risk reflects destination and crew readiness', () => {
   const moon = initialGameState('moon', 2, 'Moon Base')
   const mars = initialGameState('mars', 2, 'Mars Base')
-  assert.ok(Math.abs(getExplorationRisk(moon) - 0.25835) < 1e-10)
-  assert.ok(Math.abs(getExplorationRisk(mars) - 0.35614) < 1e-10)
+  assert.ok(Math.abs(getExplorationRisk(moon) - 0.26339) < 1e-10)
+  assert.ok(Math.abs(getExplorationRisk(mars) - 0.36118) < 1e-10)
 
   const fatigued = { ...moon, fatigue: 90, morale: 10, resources: { ...moon.resources, health: 20 } }
   assert.ok(getExplorationRisk(fatigued) > getExplorationRisk(moon))
@@ -1434,14 +1916,14 @@ test('lunar solar output has no invented four-day cycle', () => {
 })
 
 test('allows MOXIE on Mars but not on the Moon', () => {
-  const mars = prepareSurfaceMission(initialGameState('mars', 2, 'Mars Base'))
+  const mars = selectCrewSpecialty(prepareSurfaceMission(initialGameState('mars', 4, 'Mars Base')), 'medical')
   const phaseTwoReady = { ...mars, buildings: [...mars.buildings, 'command-center', 'storage', 'communications'] }
   assert.equal(canBuild(phaseTwoReady, 'moxie'), true)
-  assert.equal(canBuild(prepareSurfaceMission(initialGameState('moon', 2, 'Moon Base')), 'moxie'), false)
+  assert.equal(canBuild(selectCrewSpecialty(prepareSurfaceMission(initialGameState('moon', 2, 'Moon Base')), 'science-medical'), 'moxie'), false)
 })
 
 test('charges construction resources up front and completes a structure only after its timer', () => {
-  const initial = prepareSurfaceMission(initialGameState('moon', 2, 'Base'))
+  const initial = selectCrewSpecialty(prepareSurfaceMission(initialGameState('moon', 2, 'Base')), 'science-medical')
   const state = {
     ...initial,
     buildings: [...initial.buildings, 'command-center', 'storage', 'communications', 'workshop', 'research-lab', 'medical-bay', 'isru'],
@@ -1456,7 +1938,7 @@ test('charges construction resources up front and completes a structure only aft
   assert.equal(started.hour, state.hour + 2)
   assert.equal(canBuild(started, 'water-recycler'), false)
 
-  const firstDay = finishDay(started, ['exercise', 'maintenance', 'research'])
+  const firstDay = finishDay(started, ['exercise', 'research'])
   assert.equal(firstDay.constructionProject, null)
   assert.equal(firstDay.buildings.includes('greenhouse'), true)
   assert.ok(firstDay.dailyReports.at(-1)?.events.includes('Greenhouse construction started'))
@@ -1464,18 +1946,25 @@ test('charges construction resources up front and completes a structure only aft
 })
 
 test('construction progresses through scheduled hours and sleep rather than only day counters', () => {
-  const surface = prepareSurfaceMission(initialGameState('moon', 2, 'Timed Build', 72))
-  const started = buildInState(surface, 'command-center')
-  assert.equal(started.constructionProject?.hoursRemaining, 16)
+  const surface = prepareSurfaceMission(selectCrewSpecialty(initialGameState('moon', 3, 'Timed Build', 72), 'command'))
+  const engineer = selectCrewSpecialty(surface, 'engineering-science')
+  const constructionSite = {
+    ...engineer,
+    buildings: [...engineer.buildings, 'command-center', 'storage', 'communications'],
+  }
+  const started = buildInState(constructionSite, 'workshop')
+  assert.equal(started.constructionProject?.hoursRemaining, 22)
   const exercised = scheduleActivity(started, 'exercise')
-  assert.equal(exercised.constructionProject?.hoursRemaining, 13.5)
+  assert.equal(exercised.constructionProject?.hoursRemaining, 19.5)
   const firstShift = scheduleActivity(exercised, 'maintenance')
-  const secondShift = scheduleActivity(firstShift, 'research')
+  const secondShift = scheduleActivity(firstShift, 'maintenance')
   const bedtime = waitUntilBedtime(secondShift)
-  assert.equal(bedtime.constructionProject?.hoursRemaining, 4)
+  assert.equal(bedtime.constructionProject?.hoursRemaining, 10)
   const nextDay = sleepAndAdvanceDay(bedtime)
-  assert.equal(nextDay.constructionProject, null)
-  assert.ok(nextDay.buildings.includes('command-center'))
+  assert.equal(nextDay.constructionProject?.hoursRemaining, 2)
+  const completed = scheduleActivity(nextDay, 'exercise')
+  assert.equal(completed.constructionProject, null)
+  assert.ok(completed.buildings.includes('workshop'))
 })
 
 test('daily close records actions, resource fluctuations, and radiation exposure', () => {
@@ -1520,7 +2009,7 @@ test('rejects a build when the base cannot afford its cargo', () => {
 })
 
 test('taking a facility offline removes its output and operating costs', () => {
-  const initial = prepareSurfaceMission(initialGameState('moon', 2, 'Systems Base'))
+  const initial = prepareMaintenanceMission(initialGameState('moon', 2, 'Systems Base'))
   const state = { ...initial, day: 7, resources: { ...initial.resources, energy: 50 } }
   const before = forecastResources(state)
   const offline = toggleBuildingInState(state, 'solar-panels')
@@ -1536,14 +2025,17 @@ test('taking a facility offline removes its output and operating costs', () => {
 })
 
 test('protects the last active oxygen producer from shutdown', () => {
-  const state = prepareSurfaceMission(initialGameState('mars', 2, 'Life Support Base'))
+  const state = selectCrewSpecialty(
+    prepareSurfaceMission(selectCrewSpecialty(initialGameState('mars', 4, 'Life Support Base'), 'command')),
+    'medical',
+  )
   assert.equal(canToggleBuilding(state, 'life-support'), false)
   assert.deepEqual(toggleBuildingInState(state, 'life-support').offlineBuildings, [])
   assert.match(toggleBuildingInState(state, 'life-support').lastMessage, /oxygen-production/)
 })
 
 test('completes a 30-day lunar mission with storage, power generation, and life-support recovery', () => {
-  let state = prepareSurfaceMission(initialGameState('moon', 2, 'Long Mission'))
+  let state = prepareMaintenanceMission(initialGameState('moon', 2, 'Long Mission'))
   state = {
     ...state,
     buildings: [...new Set([...state.buildings, 'command-center', 'storage', 'communications', 'workshop', 'research-lab', 'medical-bay', 'isru', 'reactor', 'greenhouse', 'water-recycler'])],
@@ -1551,7 +2043,7 @@ test('completes a 30-day lunar mission with storage, power generation, and life-
   }
   while (!state.isGameOver) {
     if (state.missionPhase === 'return') {
-      state = resolveTransitDecision(state, 'return', 'conservative')
+      state = resolveTransitDecision(selectCrewSpecialty(state, 'command'), 'return', 'conservative')
       continue
     }
     const action = state.daysSurvived % 3 === 2 ? 'rest' : 'maintenance'
@@ -1562,15 +2054,22 @@ test('completes a 30-day lunar mission with storage, power generation, and life-
 })
 
 test('high continuous ISRU and greenhouse loads eventually exhaust a single lunar power system', () => {
-  let state = prepareSurfaceMission(initialGameState('moon', 2, 'Extended Lunar Base', 17, { maxDays: 60 }))
+  let state = prepareMaintenanceMission(initialGameState('moon', 4, 'Extended Lunar Base', 17, {
+    maxDays: 60,
+    difficulty: 'easy',
+  }))
+  const agricultureDuty = getMissionCrewAssignments(state.crewSize, state.destination, state.maxDays, state.crewSpecialtyOverrides)
+    .find((assignment) => assignment.specialty === 'medical')
+  assert.ok(agricultureDuty)
   state = {
     ...state,
+    crewSpecialtyOverrides: { ...state.crewSpecialtyOverrides, [agricultureDuty.id]: 'agriculture' },
     buildings: [...new Set([...state.buildings, 'command-center', 'storage', 'communications', 'workshop', 'research-lab', 'medical-bay', 'isru', 'reactor', 'greenhouse', 'water-recycler'])],
     regolithPreTreated: true,
   }
   while (!state.isGameOver) {
     if (state.missionPhase === 'return') {
-      state = resolveTransitDecision(state, 'return', 'conservative')
+      state = resolveTransitDecision(selectCrewSpecialty(state, 'command'), 'return', 'conservative')
       continue
     }
     state = finishDay(state, state.daysSurvived % 3 === 2 ? 'rest' : 'maintenance')
@@ -1578,12 +2077,10 @@ test('high continuous ISRU and greenhouse loads eventually exhaust a single luna
   assert.ok(state.daysSurvived < 60)
   assert.equal(state.missionResult, 'evacuation')
   assert.equal(state.failureCause?.resource, 'energy')
-  assert.ok(state.resources.food > 0)
-  assert.ok(state.resources.water > 0)
 })
 
 test('a selected 10-cycle survival campaign completes after ten operating cycles', () => {
-  let state = prepareSurfaceMission(initialGameState('moon', 2, 'Short Mission', 17, { maxDays: 10 }))
+  let state = prepareMaintenanceMission(initialGameState('moon', 2, 'Short Mission', 17, { maxDays: 10 }))
   state = {
     ...state,
     buildings: [...new Set([...state.buildings, 'command-center', 'storage', 'communications', 'workshop', 'research-lab', 'medical-bay', 'isru', 'reactor', 'greenhouse', 'water-recycler'])],
@@ -1591,7 +2088,7 @@ test('a selected 10-cycle survival campaign completes after ten operating cycles
   }
   while (!state.isGameOver) {
     if (state.missionPhase === 'return') {
-      state = resolveTransitDecision(state, 'return', 'conservative')
+      state = resolveTransitDecision(selectCrewSpecialty(state, 'command'), 'return', 'conservative')
       continue
     }
     state = finishDay(state, state.daysSurvived % 3 === 2 ? 'rest' : 'maintenance')

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Check, ChevronDown, ChevronUp, Construction } from 'lucide-react'
 import { BUILDING_PHASES, BUILDINGS, getConstructionDurationHours } from '../game/buildings'
 import { POWER_SYSTEM } from '../game/constants'
-import { canBuild, canToggleBuilding, type GameState } from '../game/model'
+import { canBuild, canManageFacility, canToggleBuilding, type GameState } from '../game/model'
 import ar from '../i18n/ar'
 import en from '../i18n/en'
 import { useGameStore } from '../store/gameStore'
@@ -38,14 +38,16 @@ export function BuildingMenu({ state }: { state: GameState }) {
             <span className="text-amber-100/70">{project.hoursRemaining} / {project.totalHours} {language === 'ar' ? 'ساعة متبقية' : 'hours remaining'}</span>
           </div>
           <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/[0.08]">
-            <div className="h-full bg-amber-200 transition-all" style={{ width: `${(project.totalHours - project.hoursRemaining) / project.totalHours * 100}%` }} />
+            <div className="block h-full w-full origin-left bg-amber-200 transition-transform" style={{ transform: `scaleX(${(project.totalHours - project.hoursRemaining) / project.totalHours})`, transformOrigin: language === 'ar' ? 'right' : 'left' }} />
           </div>
         </div>
       ) : null}
 
       {open ? (
         <div className="grid gap-2 border-t border-white/[0.06] p-3 sm:grid-cols-2">
-          {Object.values(BUILDINGS).map((building) => {
+          {Object.values(BUILDINGS)
+            .filter((building) => canManageFacility(state, building.id))
+            .map((building) => {
             const owned = state.buildings.includes(building.id)
             const inProgress = project?.buildingId === building.id
             const offline = (state.offlineBuildings || []).includes(building.id)

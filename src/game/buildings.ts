@@ -126,8 +126,8 @@ export const BUILDINGS: Record<string, BuildingDefinition> = {
   },
   greenhouse: {
     id: 'greenhouse', icon: '🌱', name: { ar: 'دفيئة زراعية', en: 'Greenhouse' },
-    description: { ar: `حملها 20 kW؛ تنتج ${GREENHOUSE_CYCLE.foodKg} كغ غذاء و${GREENHOUSE_CYCLE.oxygenKg} كغ أكسجين خلال ${GREENHOUSE_CYCLE.growthDays} أيام تشغيل.`, en: `20 kW operating load; produces ${GREENHOUSE_CYCLE.foodKg} kg food and ${GREENHOUSE_CYCLE.oxygenKg} kg oxygen over ${GREENHOUSE_CYCLE.growthDays} powered days.` },
-    phase: 4, cost: 90, cargo: 18, energyCost: 7, area: 4, production: {}, consumption: { energy: dailyPowerUse('greenhouse'), water: GREENHOUSE_CYCLE.waterLitersPerDay },
+    description: { ar: `حملها 20 kW؛ تنتج ${GREENHOUSE_CYCLE.foodKg} كغ غذاء و${GREENHOUSE_CYCLE.oxygenKg} كغ أكسجين خلال ${GREENHOUSE_CYCLE.growthDays} أيام تشغيل، وتستهلك ${GREENHOUSE_CYCLE.waterLitersPerCycle} لتر ماء للدورة.`, en: `20 kW operating load; produces ${GREENHOUSE_CYCLE.foodKg} kg food and ${GREENHOUSE_CYCLE.oxygenKg} kg oxygen over ${GREENHOUSE_CYCLE.growthDays} powered days, consuming ${GREENHOUSE_CYCLE.waterLitersPerCycle} L water per cycle.` },
+    phase: 4, cost: 90, cargo: 18, energyCost: 7, area: 4, production: {}, consumption: { energy: dailyPowerUse('greenhouse'), water: GREENHOUSE_CYCLE.waterLitersPerCycle / GREENHOUSE_CYCLE.growthDays },
   },
   moxie: {
     id: 'moxie', icon: '🧪', name: { ar: 'معمل أكسجين MOXIE', en: 'MOXIE oxygen lab' },

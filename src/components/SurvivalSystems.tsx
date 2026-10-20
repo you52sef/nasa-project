@@ -1,8 +1,9 @@
-import { Activity, AlertTriangle, BatteryCharging, Radiation, Shield, Zap } from 'lucide-react'
-import { CREW_DAILY_ROUTINE, ENVIRONMENT, POWER_SYSTEM, getCrewDailyRoutine, getCrewSolDurationHours, getSurvivalBatteryRuntimeHours } from '../game/constants'
-import { getCrewDailyEclssBalance, getPowerLoadKw, getSolarOutputKw, hasRegolithDustMitigation, isLunarNight, type EmergencyLevel, type GameState } from '../game/model'
+import { Activity, AlertTriangle, BatteryCharging, Radiation, Shield } from 'lucide-react'
+import { CREW_DAILY_ROUTINE, ENVIRONMENT, getCrewDailyRoutine, getCrewSolDurationHours } from '../game/constants'
+import { canControlEmergencyLevel, getCrewDailyEclssBalance, hasRegolithDustMitigation, isLunarNight, type EmergencyLevel, type GameState } from '../game/model'
 import { useGameStore } from '../store/gameStore'
 import { useSettingsStore } from '../store/settingsStore'
+import { getAccessDeniedMessage } from '../game/crewRosters'
 
 const EMERGENCY_RESPONSES: Record<Exclude<EmergencyLevel, 0>, { en: string; ar: string }> = {
   1: { en: 'Solar storm — shelter the crew', ar: 'عاصفة شمسية — احتموا في الملجأ' },
@@ -11,7 +12,15 @@ const EMERGENCY_RESPONSES: Record<Exclude<EmergencyLevel, 0>, { en: string; ar: 
   4: { en: 'Medical emergency — report to clinic', ar: 'طارئ طبي — توجهوا إلى العيادة' },
 }
 
-export function SurvivalSystems({ state }: { state: GameState }) {
+export function SurvivalSystems({
+  state,
+  showEclss = true,
+  showEmergencyControls = true,
+}: {
+  state: GameState
+  showEclss?: boolean
+  showEmergencyControls?: boolean
+}) {
   const language = useSettingsStore((store) => store.language)
   const setEmergencyLevel = useGameStore((store) => store.setEmergencyLevel)
   const arabic = language === 'ar'
@@ -24,20 +33,19 @@ export function SurvivalSystems({ state }: { state: GameState }) {
   )
   const lunarNight = state.destination === 'moon' && isLunarNight(state.day)
   const dayRoutine = getCrewDailyRoutine(state.destination)
-  const powerLoad = getPowerLoadKw(state)
-  const solarOutput = getSolarOutputKw(state.destination)
-
   return (
     <details className="mission-detail-disclosure mb-4">
       <summary>
-        {arabic ? 'أنظمة البقاء وجدول الطاقم' : 'Life support & crew routine'}
+        {showEclss
+          ? (arabic ? 'دعم الحياة وروتين الطاقم' : 'Life support & crew routine')
+          : (arabic ? 'استجابة قيادة الطوارئ' : 'Command emergency response')}
         <span>
-          {state.survivalMode
-            ? `${arabic ? 'وضع النجاة' : 'SURVIVAL MODE'} · ${POWER_SYSTEM.survivalLoadKw} kW`
-            : `${arabic ? 'حمل الطاقة' : 'POWER LOAD'} · ${powerLoad} kW`}
+          {showEclss
+            ? (arabic ? 'قياسات دعم الحياة' : 'ECLSS TELEMETRY')
+            : (arabic ? 'تجاوز الطوارئ' : 'EMERGENCY OVERRIDE')}
         </span>
       </summary>
-      <div className="mt-3 grid gap-3 lg:grid-cols-2">
+      {showEclss ? <div className="mt-3 grid gap-3 lg:grid-cols-2">
         <section className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-4">
           <h3 className="flex items-center gap-2 text-xs font-black text-cyan-100"><Activity size={14} />{arabic ? 'روتين اليوم' : 'DAILY CREW ROUTINE'}</h3>
           <p className="mt-1 text-[10px] text-slate-500">
@@ -69,7 +77,7 @@ export function SurvivalSystems({ state }: { state: GameState }) {
             <SystemValue label={arabic ? 'إشعاع تراكمي' : 'Cumulative radiation'} value={`${state.radiationExposure.toFixed(1)} mSv`} />
           </div>
           {state.permanentRadiationDamageWarning ? (
-            <p role="alert" className="mt-2 flex items-center gap-1.5 text-[10px] font-bold text-rose-200"><Radiation size={13} />{arabic ? 'تحذير: تجاوز حد المهنة المرجعي 600 mSv.' : 'Warning: cumulative dose reached the 600 mSv career-limit reference.'}</p>
+            <p role="alert" className="mt-2 flex items-center gap-1.5 text-[10px] font-bold text-rose-200"><Radiation size={13} />{arabic ? 'تحذير تدريبي: وصلت الجرعة التراكمية إلى عتبة اللعبة 600 mSv؛ هذه ليست حدًا طبيًا أو تشغيليًا.' : 'Training alert: cumulative dose reached the 600 mSv game threshold; this is not a medical or operational limit.'}</p>
           ) : null}
           {state.oxygenEmergencyHoursRemaining !== null ? (
             <p role="alert" className="mt-2 flex items-center gap-1.5 text-[10px] font-bold text-rose-200"><AlertTriangle size={13} />{arabic ? `نفد الأكسجين — ${state.oxygenEmergencyHoursRemaining} ساعة حتى فقدان الطاقم.` : `Oxygen depleted — ${state.oxygenEmergencyHoursRemaining} game hours until crew loss.`}</p>
@@ -81,26 +89,30 @@ export function SurvivalSystems({ state }: { state: GameState }) {
             {arabic ? 'معدلات تعليمية مبسطة؛ تفاعل ساباتيه يعيد نظريًا 0.818 L ماء لكل kg من CO₂.' : 'Simplified educational rates; Sabatier stoichiometry yields about 0.818 L water per kg CO₂.'}
           </p>
         </section>
-      </div>
+      </div> : null}
 
-      <section className="mt-3 rounded-xl border border-white/[0.07] bg-white/[0.02] p-4">
+      {showEmergencyControls ? <section className="mt-3 rounded-xl border border-white/[0.07] bg-white/[0.02] p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h3 className="flex items-center gap-2 text-xs font-black text-amber-100"><Zap size={14} />{arabic ? 'الطاقة والاستجابة للطوارئ' : 'POWER & EMERGENCY RESPONSE'}</h3>
-            <p className="mt-1 text-[10px] text-slate-500">
-              {arabic
-                ? `الشمس: ${solarOutput} kW · المفاعل: 25 kW ثابت · البطارية: 200 kWh (نحو ${getSurvivalBatteryRuntimeHours().toFixed(1)} ساعة عند حمل النجاة ${POWER_SYSTEM.survivalLoadKw} kW).`
-                : `Solar: ${solarOutput} kW · reactor: 25 kW constant · battery: 200 kWh (about ${getSurvivalBatteryRuntimeHours().toFixed(1)} h at ${POWER_SYSTEM.survivalLoadKw} kW survival load).`}
-            </p>
+            <h3 className="text-xs font-black text-amber-100">{arabic ? 'تجاوز قيادة الطوارئ' : 'COMMAND EMERGENCY OVERRIDE'}</h3>
           </div>
           <div className="flex flex-wrap gap-1.5">
+            {!canControlEmergencyLevel(state, 1) ? (
+              <p className="w-full rounded-lg border border-rose-300/20 bg-rose-400/[0.06] px-2.5 py-1.5 text-[10px] font-bold text-rose-100" role="note">
+                {getAccessDeniedMessage('command', language)}
+              </p>
+            ) : null}
             {([1, 2, 3, 4] as const).map((level) => (
               <button
                 key={level}
                 type="button"
                 aria-pressed={state.emergencyLevel === level}
+                disabled={!canControlEmergencyLevel(state, level)}
+                title={!canControlEmergencyLevel(state, level)
+                  ? getAccessDeniedMessage('command', language)
+                  : undefined}
                 onClick={() => setEmergencyLevel(state.emergencyLevel === level ? 0 : level)}
-                className={`rounded-lg border px-2 py-1.5 text-[9px] font-bold ${state.emergencyLevel === level ? 'border-amber-200/30 bg-amber-100/10 text-amber-100' : 'border-white/10 bg-white/[0.03] text-slate-300'}`}
+                  className={`rounded-lg border px-2 py-1.5 text-[9px] font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${state.emergencyLevel === level ? 'border-amber-200/30 bg-amber-100/10 text-amber-100' : 'border-white/10 bg-white/[0.03] text-slate-300'}`}
               >
                 {arabic ? `مستوى ${level}` : `Level ${level}`}
               </button>
@@ -111,7 +123,7 @@ export function SurvivalSystems({ state }: { state: GameState }) {
           {state.emergencyLevel ? EMERGENCY_RESPONSES[state.emergencyLevel][language] : (arabic ? 'لا توجد استجابة طوارئ نشطة.' : 'No emergency response active.')}
         </p>
         {state.survivalMode ? <p className="mt-1 flex items-center gap-1.5 text-[10px] font-bold text-amber-100"><BatteryCharging size={13} />{arabic ? 'أُوقفت المباني الإنتاجية؛ تعمل أحمال الموئل والقيادة والاتصالات وغرفة الضغط والتخزين فقط.' : 'Productive facilities are shut down; habitat, command, communications, airlock and storage loads remain.'}</p> : null}
-      </section>
+      </section> : null}
     </details>
   )
 }
